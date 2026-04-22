@@ -71,44 +71,39 @@ def _is_label_column(ss_char):
     return ss_char != "."
 
 
-def _get_reference_annotation(align):
-    for key in ["reference_annotation", "rf", "reference"]:
-        if key in align.column_annotations:
-            return str(align.column_annotations[key])
-    return None
+def _normalize_sprinzl_label(label):
+  s = str(label)
+  if s.startswith("e"):
+    return s
+  if len(s) > 1 and s[-1].isalpha():
+    return f"{s[:-1]}{s[-1].upper()}"
+  return s
 
 
-def _labels_from_scheme_and_alignment(ss, rf, scheme_labels):
-    labels = []
-    currcount = 0
-    insertlength = 0
-    lastpos = "0"
+def _column_has_residue(align, col_idx):
+  for record in align:
+    base = str(record.seq[col_idx])
+    if base not in ["-", "."]:
+      return True
+  return False
 
-    for i, ss_char in enumerate(ss):
-        if not _is_label_column(ss_char):
-            continue
 
-        rf_char = "+"
-        if rf is not None and i < len(rf):
-            rf_char = rf[i]
+def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
+  label_columns = [i for i, ss_char in enumerate(ss) if _is_label_column(ss_char)]
+  if len(label_columns) > len(scheme_labels):
+    raise ValueError(
+      f"Scheme has {len(scheme_labels)} labels but alignment needs {len(label_columns)} label columns."
+    )
 
-        # tDRnamer-style behavior: consume numbered Sprinzl positions only on RF match columns.
-        if currcount >= len(scheme_labels):
-            insertlength += 1
-            labels.append(f"{lastpos}i{insertlength}")
-            continue
+  labels = []
+  for label_idx, col_idx in enumerate(label_columns):
+    label = _normalize_sprinzl_label(scheme_labels[label_idx])
+    if _column_has_residue(align, col_idx):
+      labels.append(label)
+    else:
+      labels.append("-")
 
-        if rf_char in set("+=*"):
-            label = str(scheme_labels[currcount])
-            labels.append(label)
-            lastpos = label
-            currcount += 1
-            insertlength = 0
-        else:
-            insertlength += 1
-            labels.append(f"{lastpos}i{insertlength}")
-
-    return labels
+  return labels
 
 @cli.command()
 @click.option("--output", required=True, help="Output labels file.")
@@ -130,8 +125,6 @@ def auto_labels(stk, output, scheme):
         raise ValueError(f"{stk}: missing secondary_structure annotation (invalid cmalign output?)")
 
     ss = str(align.column_annotations["secondary_structure"])
-    rf = _get_reference_annotation(align)
-
     selected_scheme = scheme.lower()
 
     if selected_scheme not in SPRINZL_SCHEMES:
@@ -139,7 +132,7 @@ def auto_labels(stk, output, scheme):
             f"Invalid Sprinzl scheme '{scheme}'. "
             "Specify one of: euk, arch, bact, mito."
         )
-    labels = _labels_from_scheme_and_alignment(ss, rf, SPRINZL_SCHEMES[selected_scheme])
+    labels = _labels_from_scheme_and_alignment(align, ss, SPRINZL_SCHEMES[selected_scheme])
     required = sum(1 for c in ss if _is_label_column(c))
     if len(labels) != required:
         raise ValueError(
