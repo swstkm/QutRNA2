@@ -66,6 +66,50 @@ SPRINZL_SCHEMES = {
     ]
 }
 
+
+def _is_label_column(ss_char):
+    return ss_char != "."
+
+
+def _get_reference_annotation(align):
+    for key in ["reference_annotation", "rf", "reference"]:
+        if key in align.column_annotations:
+            return str(align.column_annotations[key])
+    return None
+
+
+def _labels_from_scheme_and_alignment(ss, rf, scheme_labels):
+    labels = []
+    currcount = 0
+    insertlength = 0
+    lastpos = "0"
+
+    for i, ss_char in enumerate(ss):
+        if not _is_label_column(ss_char):
+            continue
+
+        rf_char = "+"
+        if rf is not None and i < len(rf):
+            rf_char = rf[i]
+
+        # tDRnamer-style behavior: consume numbered Sprinzl positions only on RF match columns.
+        if currcount >= len(scheme_labels):
+            insertlength += 1
+            labels.append(f"{lastpos}i{insertlength}")
+            continue
+
+        if rf_char in set("+=*"):
+            label = str(scheme_labels[currcount])
+            labels.append(label)
+            lastpos = label
+            currcount += 1
+            insertlength = 0
+        else:
+            insertlength += 1
+            labels.append(f"{lastpos}i{insertlength}")
+
+    return labels
+
 @cli.command()
 @click.option("--output", required=True, help="Output labels file.")
 @click.option(
@@ -86,6 +130,7 @@ def auto_labels(stk, output, scheme):
         raise ValueError(f"{stk}: missing secondary_structure annotation (invalid cmalign output?)")
 
     ss = str(align.column_annotations["secondary_structure"])
+    rf = _get_reference_annotation(align)
 
     selected_scheme = scheme.lower()
 
@@ -94,15 +139,12 @@ def auto_labels(stk, output, scheme):
             f"Invalid Sprinzl scheme '{scheme}'. "
             "Specify one of: euk, arch, bact, mito."
         )
-
-    # Validate label count matches alignment structure
-    labels = SPRINZL_SCHEMES[selected_scheme]
-    non_gap_cols = sum(1 for c in ss if c != ".")
-    if non_gap_cols != len(labels):
+    labels = _labels_from_scheme_and_alignment(ss, rf, SPRINZL_SCHEMES[selected_scheme])
+    required = sum(1 for c in ss if _is_label_column(c))
+    if len(labels) != required:
         raise ValueError(
-            f"Scheme '{selected_scheme}' has {len(labels)} labels "
-            f"but alignment has {non_gap_cols} non-gap columns. "
-            f"CM and scheme are incompatible."
+        f"Auto-label generation failed: generated {len(labels)} labels "
+        f"for {required} label columns."
         )
 
     # Write labels
