@@ -1,3 +1,4 @@
+import os
 import click
 import pandas as pd
 import pysam
@@ -23,6 +24,96 @@ def write_fasta_records(records, fname):
 
 
 # FIXME
+
+# Organism/model-specific Sprinzl schemes (from tDRnamer tdrdbutils.py).
+# Labels are used in order for non-gap consensus structure columns.
+SPRINZL_SCHEMES = {
+    "euk": [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+        "17", "17a", "18", "19", "20", "20a", "20b", "21", "22", "23", "24", "25", "26", "27", "28", "29",
+        "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45",
+        "e11", "e12", "e13", "e14", "e15", "e16", "e17", "e1", "e2", "e3", "e4", "e5",
+        "e27", "e26", "e25", "e24", "e23", "e22", "e21",
+        "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
+        "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76"
+    ],
+    "arch": [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+        "17", "17a", "18", "19", "20", "20a", "20b", "21", "22", "23", "24", "25", "26", "27", "28", "29",
+        "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45",
+        "e11", "e12", "e13", "e14", "e15", "e16", "e17", "e1", "e2", "e3", "e4",
+        "e27", "e26", "e25", "e24", "e23", "e22", "e21",
+        "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
+        "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76"
+    ],
+    "bact": [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+        "17", "17a", "18", "19", "20", "20a", "20b", "21", "22", "23", "24", "25", "26", "27", "28", "29",
+        "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45",
+        "e11", "e12", "e13", "e14", "e15", "e16", "e17", "e1", "e2", "e3", "e4",
+        "e27", "e26", "e25", "e24", "e23", "e22", "e21",
+        "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62",
+        "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76"
+    ],
+    "mito": [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+        "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37",
+        "38", "39", "40", "41", "42", "43", "44", "45",
+        "e11", "e12", "e13", "e14", "e15", "e16", "e17", "e1", "e2", "e3", "e4",
+        "e27", "e26", "e25", "e24", "e23", "e22", "e21",
+        "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64",
+        "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76"
+    ]
+}
+
+@cli.command()
+@click.option("--output", required=True, help="Output labels file.")
+@click.option(
+    "--scheme",
+    required=True,
+    type=click.Choice(["euk", "arch", "bact", "mito"], case_sensitive=False),
+    help="Sprinzl scheme: euk|arch|bact|mito",
+)
+@click.argument("stk", type=click.Path(exists=True))
+def auto_labels(stk, output, scheme):
+    """Generate Sprinzl labels from CM alignment consensus structure."""
+    try:
+        align = AlignIO.read(stk, "stockholm")
+    except Exception as e:
+        raise IOError(f"Failed to read alignment from {stk}: {e}") from e
+
+    if "secondary_structure" not in align.column_annotations:
+        raise ValueError(f"{stk}: missing secondary_structure annotation (invalid cmalign output?)")
+
+    ss = str(align.column_annotations["secondary_structure"])
+
+    selected_scheme = scheme.lower()
+
+    if selected_scheme not in SPRINZL_SCHEMES:
+        raise ValueError(
+            f"Invalid Sprinzl scheme '{scheme}'. "
+            "Specify one of: euk, arch, bact, mito."
+        )
+
+    # Validate label count matches alignment structure
+    labels = SPRINZL_SCHEMES[selected_scheme]
+    non_gap_cols = sum(1 for c in ss if c != ".")
+    if non_gap_cols != len(labels):
+        raise ValueError(
+            f"Scheme '{selected_scheme}' has {len(labels)} labels "
+            f"but alignment has {non_gap_cols} non-gap columns. "
+            f"CM and scheme are incompatible."
+        )
+
+    # Write labels
+    os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+    try:
+        with open(output, "w", encoding="utf-8") as f:
+            for label in labels:
+                f.write(f"{label}\n")
+    except Exception as e:
+        raise IOError(f"Failed to write {output}: {e}") from e
+
 @cli.command()
 @click.option("--output", required=True, help="Output for aligned FASTA")
 @click.argument("stk", type=click.Path(exists=True))
