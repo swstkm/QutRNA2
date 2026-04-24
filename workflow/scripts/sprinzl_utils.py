@@ -1,8 +1,12 @@
 import os
+import logging
 import click
 import pandas as pd
 import pysam
 from Bio import AlignIO
+
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -81,11 +85,33 @@ def _normalize_sprinzl_label(label):
 
 
 def _column_has_residue(align, col_idx):
+  residue_count = 0
+  gap_count = 0
+  other_symbols = []
+  unusual_record_ids = []
   for record in align:
     base = str(record.seq[col_idx])
     if base not in ["-", "."]:
-      return True
-  return False
+      residue_count += 1
+      if not base.isalpha() and base not in other_symbols:
+        other_symbols.append(base)
+        unusual_record_ids.append(record.id)
+    else:
+      gap_count += 1
+  if unusual_record_ids:
+    logger.debug(
+      f"alignment column {col_idx} summary: residues={residue_count} gaps={gap_count} "
+      f"unusual_symbols={other_symbols} unusual_record_ids={unusual_record_ids}"
+    )
+  return residue_count > 0
+
+
+def _available_label_columns(align, ss):
+  return [
+    i
+    for i, ss_char in enumerate(ss)
+    if _is_label_column(ss_char) and _column_has_residue(align, i)
+  ]
 
 
 def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
@@ -95,6 +121,7 @@ def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
       f"Scheme has {len(scheme_labels)} labels but alignment needs {len(label_columns)} label columns."
     )
 
+  available_label_columns = set(_available_label_columns(align, ss))
   labels = []
   for label_idx, col_idx in enumerate(label_columns):
     label = _normalize_sprinzl_label(scheme_labels[label_idx])
@@ -102,6 +129,18 @@ def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
       labels.append(label)
     else:
       labels.append("-")
+
+  labeled_available_columns = [
+    col_idx
+    for col_idx, label in zip(label_columns, labels)
+    if col_idx in available_label_columns and label != "-"
+  ]
+  if len(labeled_available_columns) != len(available_label_columns):
+    missing_columns = sorted(available_label_columns.difference(labeled_available_columns))
+    raise ValueError(
+      "Auto-label generation failed: some biologically available label columns were not assigned "
+      f"a Sprinzl label ({missing_columns})."
+    )
 
   return labels
 
@@ -113,9 +152,13 @@ def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
     type=click.Choice(["euk", "arch", "bact", "mito"], case_sensitive=False),
     help="Sprinzl scheme: euk|arch|bact|mito",
 )
+@click.option("--debug", is_flag=True, help="Enable debug logging for residue checks.")
 @click.argument("stk", type=click.Path(exists=True))
-def auto_labels(stk, output, scheme):
+def auto_labels(stk, output, scheme, debug):
     """Generate Sprinzl labels from CM alignment consensus structure."""
+  if debug:
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s")
+
     try:
         align = AlignIO.read(stk, "stockholm")
     except Exception as e:
