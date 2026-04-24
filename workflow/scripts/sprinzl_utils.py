@@ -15,16 +15,16 @@ def cli():
 
 
 class FastaRecord:
-  def __init__(self, id, seq):
-    self.id = id
-    self.seq = seq
+    def __init__(self, id, seq):
+        self.id = id
+        self.seq = seq
 
 
 def write_fasta_records(records, fname):
-  with open(fname, "w") as f:
-    for record in records.values():
-      f.write(f">{record.id}\n")
-      f.write(f"{record.seq}\n")
+    with open(fname, "w") as f:
+        for record in records.values():
+            f.write(f">{record.id}\n")
+            f.write(f"{record.seq}\n")
 
 
 # FIXME
@@ -76,73 +76,73 @@ def _is_label_column(ss_char):
 
 
 def _normalize_sprinzl_label(label):
-  s = str(label)
-  if s.startswith("e"):
+    s = str(label)
+    if s.startswith("e"):
+        return s
+    if len(s) > 1 and s[-1].isalpha():
+        return f"{s[:-1]}{s[-1].upper()}"
     return s
-  if len(s) > 1 and s[-1].isalpha():
-    return f"{s[:-1]}{s[-1].upper()}"
-  return s
 
 
 def _column_has_residue(align, col_idx):
-  residue_count = 0
-  gap_count = 0
-  other_symbols = []
-  unusual_record_ids = []
-  for record in align:
-    base = str(record.seq[col_idx])
-    if base not in ["-", "."]:
-      residue_count += 1
-      if not base.isalpha() and base not in other_symbols:
-        other_symbols.append(base)
-        unusual_record_ids.append(record.id)
-    else:
-      gap_count += 1
-  if unusual_record_ids:
-    logger.debug(
-      f"alignment column {col_idx} summary: residues={residue_count} gaps={gap_count} "
-      f"unusual_symbols={other_symbols} unusual_record_ids={unusual_record_ids}"
-    )
-  return residue_count > 0
+    residue_count = 0
+    gap_count = 0
+    other_symbols = []
+    unusual_record_ids = []
+    for record in align:
+        base = str(record.seq[col_idx])
+        if base not in ["-", "."]:
+            residue_count += 1
+            if not base.isalpha() and base not in other_symbols:
+                other_symbols.append(base)
+                unusual_record_ids.append(record.id)
+        else:
+            gap_count += 1
+    if unusual_record_ids:
+        logger.debug(
+            f"alignment column {col_idx} summary: residues={residue_count} gaps={gap_count} "
+            f"unusual_symbols={other_symbols} unusual_record_ids={unusual_record_ids}"
+        )
+    return residue_count > 0
 
 
 def _available_label_columns(align, ss):
-  return [
-    i
-    for i, ss_char in enumerate(ss)
-    if _is_label_column(ss_char) and _column_has_residue(align, i)
-  ]
+    return [
+        i
+        for i, ss_char in enumerate(ss)
+        if _is_label_column(ss_char) and _column_has_residue(align, i)
+    ]
 
 
 def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
-  label_columns = [i for i, ss_char in enumerate(ss) if _is_label_column(ss_char)]
-  if len(label_columns) > len(scheme_labels):
-    raise ValueError(
-      f"Scheme has {len(scheme_labels)} labels but alignment needs {len(label_columns)} label columns."
-    )
+    label_columns = [i for i, ss_char in enumerate(ss) if _is_label_column(ss_char)]
+    if len(label_columns) > len(scheme_labels):
+        raise ValueError(
+            f"Scheme has {len(scheme_labels)} labels but alignment needs {len(label_columns)} label columns."
+        )
 
-  available_label_columns = set(_available_label_columns(align, ss))
-  labels = []
-  for label_idx, col_idx in enumerate(label_columns):
-    label = _normalize_sprinzl_label(scheme_labels[label_idx])
-    if _column_has_residue(align, col_idx):
-      labels.append(label)
-    else:
-      labels.append("-")
+    available_label_columns = set(_available_label_columns(align, ss))
+    labels = []
+    for label_idx, col_idx in enumerate(label_columns):
+        label = _normalize_sprinzl_label(scheme_labels[label_idx])
+        if _column_has_residue(align, col_idx):
+            labels.append(label)
+        else:
+            labels.append("-")
 
-  labeled_available_columns = [
-    col_idx
-    for col_idx, label in zip(label_columns, labels)
-    if col_idx in available_label_columns and label != "-"
-  ]
-  if len(labeled_available_columns) != len(available_label_columns):
-    missing_columns = sorted(available_label_columns.difference(labeled_available_columns))
-    raise ValueError(
-      "Auto-label generation failed: some biologically available label columns were not assigned "
-      f"a Sprinzl label ({missing_columns})."
-    )
+    labeled_available_columns = [
+        col_idx
+        for col_idx, label in zip(label_columns, labels)
+        if col_idx in available_label_columns and label != "-"
+    ]
+    if len(labeled_available_columns) != len(available_label_columns):
+        missing_columns = sorted(available_label_columns.difference(labeled_available_columns))
+        raise ValueError(
+            "Auto-label generation failed: some biologically available label columns were not assigned "
+            f"a Sprinzl label ({missing_columns})."
+        )
 
-  return labels
+    return labels
 
 @cli.command()
 @click.option("--output", required=True, help="Output labels file.")
@@ -156,8 +156,8 @@ def _labels_from_scheme_and_alignment(align, ss, scheme_labels):
 @click.argument("stk", type=click.Path(exists=True))
 def auto_labels(stk, output, scheme, debug):
     """Generate Sprinzl labels from CM alignment consensus structure."""
-  if debug:
-    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s")
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(name)s:%(message)s")
 
     try:
         align = AlignIO.read(stk, "stockholm")
@@ -196,25 +196,25 @@ def auto_labels(stk, output, scheme, debug):
 @click.option("--output", required=True, help="Output for aligned FASTA")
 @click.argument("stk", type=click.Path(exists=True))
 def stk_to_afasta(stk, output):
-  align = AlignIO.read(stk, "stockholm")
-  ss = str(align.column_annotations["secondary_structure"])
+    align = AlignIO.read(stk, "stockholm")
+    ss = str(align.column_annotations["secondary_structure"])
 
-  id2seq = {}
-  for record in align:
-    new_seq = []
-    for b, s in zip(str(record.seq), ss):
-      if s == ".":
-        if b != "-":
-          new_seq.append(b.lower())
-        else:
-          new_seq.append("-")
-      elif b == "-":
-        new_seq.append(".")
-      else:
-        new_seq.append(b.upper())
-    id2seq[record.id] = FastaRecord(record.id, "".join(new_seq))
+    id2seq = {}
+    for record in align:
+        new_seq = []
+        for b, s in zip(str(record.seq), ss):
+            if s == ".":
+                if b != "-":
+                    new_seq.append(b.lower())
+                else:
+                    new_seq.append("-")
+            elif b == "-":
+                new_seq.append(".")
+            else:
+                new_seq.append(b.upper())
+        id2seq[record.id] = FastaRecord(record.id, "".join(new_seq))
 
-  write_fasta_records(id2seq, output)
+    write_fasta_records(id2seq, output)
 
 
 @cli.command()
@@ -222,36 +222,39 @@ def stk_to_afasta(stk, output):
 @click.option("--output", required=True, help="Output FNAME")
 @click.argument("afasta", type=click.Path(exists=True))
 def afasta_to_sprinzl(afasta, consensus_labels, output):
-  cl = pd.read_csv(consensus_labels, sep="\t")
+    cl = pd.read_csv(consensus_labels, sep="\t")
 
-  dfs = []
-  faidx = pysam.FastaFile(afasta)
-  for ref in faidx.references:
-    seq = faidx[ref]
-    la_sprinzl = []
-    la_aln_pos = []
-    la_seq_pos = []
-    la_letter = []
-    seq_pos = 0
+    dfs = []
+    faidx = pysam.FastaFile(afasta)
+    for ref in faidx.references:
+        seq = faidx[ref]
+        la_sprinzl = []
+        la_aln_pos = []
+        la_seq_pos = []
+        la_letter = []
+        seq_pos = 0
 
-    for aln_pos, (letter, label) in enumerate(zip(seq, cl["label"].to_list())):
-      if letter in [".", "-"]:
-        pass
-      else:
-        seq_pos += 1
-        la_aln_pos.append(aln_pos)
-        la_seq_pos.append(seq_pos)
-        la_sprinzl.append(label)
-        la_letter.append(letter)
-    df = pd.DataFrame(
-      {"id": ref,
-      "seq_letter": la_letter,
-      "seq_pos": la_seq_pos,
-      "aln_pos": la_aln_pos,
-      "sprinzl": la_sprinzl})
-    dfs.append(df)
+        for aln_pos, (letter, label) in enumerate(zip(seq, cl["label"].to_list())):
+            if letter in [".", "-"]:
+                pass
+            else:
+                seq_pos += 1
+                la_aln_pos.append(aln_pos)
+                la_seq_pos.append(seq_pos)
+                la_sprinzl.append(label)
+                la_letter.append(letter)
+        df = pd.DataFrame(
+            {
+                "id": ref,
+                "seq_letter": la_letter,
+                "seq_pos": la_seq_pos,
+                "aln_pos": la_aln_pos,
+                "sprinzl": la_sprinzl,
+            }
+        )
+        dfs.append(df)
 
-  pd.concat(dfs).to_csv(output, sep="\t", index=False, quoting=False)
+    pd.concat(dfs).to_csv(output, sep="\t", index=False, quoting=False)
 
 
 @cli.command()
@@ -259,32 +262,32 @@ def afasta_to_sprinzl(afasta, consensus_labels, output):
 @click.option("--labels", required=True, type=click.Path(exists=True))
 @click.argument("stk", type=click.Path(exists=True))
 def consensus_labels(labels, stk, output):
-  align = AlignIO.read(stk, "stockholm")
-  ss = str(align.column_annotations["secondary_structure"])
-  cl = pd.read_csv(labels, header=None)[0].to_list()
+    align = AlignIO.read(stk, "stockholm")
+    ss = str(align.column_annotations["secondary_structure"])
+    cl = pd.read_csv(labels, header=None)[0].to_list()
 
-  aln_labels = []
-  label_i = 0
-  for s in ss:
-    if s in ["(", ")", "<", ">", "{", "}"]:
-      aln_labels.append(cl[label_i])
-      label_i += 1
-    elif s in [",", ":", "_", "-", "~"]:
-      aln_labels.append(cl[label_i])
-      label_i += 1
-    elif s == ".":
-      aln_labels.append("-")
-    else:
-      raise Exception(f"Unsupported secondary structure: {s}")
-  try:
-    assert len(aln_labels) == len(ss)
-  except AssertionError:
-    raise Exception("Mismatch of Sprinzl labels and secondary structure consensus alignment!")
+    aln_labels = []
+    label_i = 0
+    for s in ss:
+        if s in ["(", ")", "<", ">", "{", "}"]:
+            aln_labels.append(cl[label_i])
+            label_i += 1
+        elif s in [",", ":", "_", "-", "~"]:
+            aln_labels.append(cl[label_i])
+            label_i += 1
+        elif s == ".":
+            aln_labels.append("-")
+        else:
+            raise Exception(f"Unsupported secondary structure: {s}")
+    try:
+        assert len(aln_labels) == len(ss)
+    except AssertionError:
+        raise Exception("Mismatch of Sprinzl labels and secondary structure consensus alignment!")
 
-  with open(output, "w") as f:
-    f.write(f"aln_pos\tss\tlabel\n")
-    for i, (s, l) in enumerate(zip(ss, aln_labels)):
-      f.write(f"{i}\t{s}\t{l}\n")
+    with open(output, "w") as f:
+        f.write(f"aln_pos\tss\tlabel\n")
+        for i, (s, l) in enumerate(zip(ss, aln_labels)):
+            f.write(f"{i}\t{s}\t{l}\n")
 
 
 @cli.command()
