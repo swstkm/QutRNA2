@@ -149,15 +149,15 @@ In summary, the sample description `<SAMPLE_DESC>` must be a TAB-separated file 
 See the files in the `QutRNA2/examples` folder for documented YAML and toy examples for sample tables. Note that the column `base_calling` is a legacy field and should be set to `pass` for all rows.
 QutRNA2 distinguishes the configuration of the analysis and the data. The following analysis types are supported: 
 
-* map reads with gpu-tRNA-mapper (see `QutRNA2/examples/analysis/map_with_gpu.yaml`),
+* **(recommended)** map reads with gpu-tRNA-mapper (see `QutRNA2/examples/analysis/map_with_gpu.yaml`),
 * map reads with parasail (see `QutRNA2/examples/analysis/map_with_parasail.yaml`), and
 * use exisiting mapping (see `QutRNA2/examples/analysis/existing_mapping.yaml`.
 
 QutRNA2 supports the following approaches to assign Sprinzl coordinates and the configuration of data input differs based on it:
 
-* using a covarince model and secondary structure alignment (see `QutRNA2/examples/data/sprinzl_cm.yaml`),
-* using an existing aligned FASTA file (see `QutRNA2/examples/data/sprinzl_afasta.yaml`), or
-* a direct mapping of sequence to Sprinzl coordinates (see `QutRNA2/examples/data/seq_to_sprinzl.yaml`)).
+* **(recommended)** using a covarince model and secondary structure alignment (see `QutRNA2/examples/data/data_cm.yaml`),
+* using an existing aligned FASTA file (see `QutRNA2/examples/data/data_afasta.yaml`), or
+* a direct mapping of sequence to Sprinzl coordinates (see `QutRNA2/examples/data/data_seq_to_sprinzl.yaml`)).
 
 Those files are templates and must be adjusted to the user's needs.
 
@@ -168,12 +168,12 @@ Data for entries with the same "sample_name" will be merged - they represent tec
 Second, define your `<DATA_YAML>`. This file describes what reference and Sprinzl coordinates (if any) to use. See `examples/data/*.yaml`. Make sure to add your `<SAMPLE_DESC>`. Provide "ref_fasta" and define what Sprinzl coordinates to use and the size of the adapters used! Correct adapter lengths are essential!
 
 ### Sprinzl
-For eukaryotic nuclear tRNAs, we use the following covariance model [TRNAinf-euk.cm](https://github.com/UCSC-LoweLab/tRAX/blob/master/TRNAinf-euk.cm) and labeling `data/nuclear-euk-masked.txt`.
+For eukaryotic nuclear tRNAs we use the Sprinzl labels at: `data/nuclear-euk-masked.txt`.
 
 For human mt-tRNAs, we use the sequence to Sprinzl mapping in [https://www.nature.com/articles/s41467-020-18068-6](https://www.nature.com/articles/s41467-020-18068-6) 
 and deposited the data along with the Sprinzl labels to: `data/human_mt_seq_to_sprinzl.tsv` and `data/human_mt_sprinzl_labels.txt`.
 
-It is crucial to obtain covariance models for the organism and tRNAs studied. These models can be acquired, for example, from [https://github.com/UCSC-LoweLab/tRNAscan-SE/tree/master/lib/models](https://github.com/UCSC-LoweLab/tRNAscan-SE/tree/master/lib/models).
+It is crucial to obtain covariance models for the organism and tRNAs studied if you are using the covariance model based workflow (i.e. based on `data_cm.yaml` template config file). These models can be acquired, for example, from [https://github.com/UCSC-LoweLab/tRNAscan-SE/tree/master/lib/models](https://github.com/UCSC-LoweLab/tRNAscan-SE/tree/master/lib/models). For eukaryotic nuclear tRNAs, we use the following covariance model [TRNAinf-euk.cm](https://github.com/UCSC-LoweLab/tRAX/blob/master/TRNAinf-euk.cm).
 
 ## Setup analysis configuration
 Finally, define `<ANALYSIS_YAML>`. Here, the workflow is manipulated, and custom plots are defined. Check `examples/analysis/*.yaml` for examples. For the recommended GPU run, use `examples/analysis//map_with_gpu.yaml` as your template. Use `examples/analysis/map_with_parasail.yaml` instead as a template if you don't use GPU and would like to use parasail, but expect significantly longer runtimes.
