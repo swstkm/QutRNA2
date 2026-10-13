@@ -98,8 +98,20 @@ get_plot_args <- function(df, opts) {
 ################################################################################
 
 estimate_coverage_info <- function(df, condition1, condition2) {
-  coverage_summary <- df |>
-    dplyr::select("trna", starts_with("reads_")) |>
+  # a read spanning a position gives either a base call or a deletion. JACUSA2's
+  # own reads column is base_calls + insertions + deletions, which counts a read
+  # carrying an insertion twice
+  spanning <- df["trna"]
+  for (col in grep("^base_calls_\\d+_\\d+$", names(df), value = TRUE)) {
+    deletions <- sub("^base_calls_", "deletions_", col)
+    if (!deletions %in% names(df)) {
+      stop("estimate_coverage_info: ", col, " has no matching ", deletions,
+           ". Pass -D to JACUSA2 so deletions are reported.")
+    }
+    spanning[[sub("^base_calls_", "reads_", col)]] <- df[[col]] + df[[deletions]]
+  }
+
+  coverage_summary <- spanning |>
     group_by(trna) |>
     summarise_all(median) |>
     ungroup() |>
