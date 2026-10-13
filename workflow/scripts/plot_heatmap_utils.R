@@ -139,6 +139,62 @@ estimate_coverage_info <- function(df, condition1, condition2) {
   return(coverage_summary |> dplyr::select(-all_of("condition_i")))
 }
 
+
+coverage_groups <- function(coverage_summary, whisker = 1.5) {
+  expression <- coverage_summary |>
+    group_by(trna) |>
+    summarise(reads = median(reads), .groups = "drop")
+
+  # the groups are the parts of a boxplot of log coverage: below the box, the
+  # box, above the box, and whatever lies past the whisker
+  reads <- log10(expression$reads)
+  quartiles <- quantile(reads, c(.25, .75))
+  edges <- c(quartiles, quartiles[2] + whisker * diff(quartiles))
+  expression$bin <- cut(reads, c(-Inf, edges, Inf), labels = FALSE)
+
+  # the label states the range it was cut on
+  labels <- expression |>
+    group_by(bin) |>
+    summarise(label = sprintf("%.0f-%.0f reads", min(reads), max(reads)),
+              .groups = "drop")
+
+  expression |>
+    inner_join(labels, by = join_by(bin)) |>
+    transmute(trna, reads,
+              coverage_group = factor(label, levels = labels$label))
+}
+
+
+plot_coverage_distribution <- function(expression, base_size = 9,
+                                       xlab = "median coverage",
+                                       remove_prefix = "") {
+  beyond <- expression |>
+    filter(coverage_group == levels(coverage_group)[nlevels(coverage_group)]) |>
+    mutate(label = sub(remove_prefix, "", trna))
+
+  ggplot(expression, aes(x = reads, y = "")) +
+    stat_boxplot(geom = "errorbar", width = .25, colour = "grey45",
+                 linewidth = .3) +
+    geom_boxplot(outlier.shape = NA, width = .55, colour = "grey45",
+                 linewidth = .3) +
+    geom_jitter(aes(colour = coverage_group), height = .16, size = rel(.9),
+                alpha = .75) +
+    geom_text(data = beyond, aes(label = label), size = rel(2.2),
+              angle = 90, hjust = 0, nudge_y = .24, colour = "grey25") +
+    scale_x_log10(labels = scales::label_number(
+      scale_cut = scales::cut_short_scale())) +
+    scale_colour_manual(values = c("#004488", "#DDAA33", "#BB5566", "#000000")) +
+    expand_limits(y = c(0.6, 1.9)) +
+    labs(x = xlab, y = "") +
+    theme_classic(base_size = base_size) +
+    theme(legend.position = "top",
+          legend.title = element_blank(),
+          legend.margin = margin(0, 0, 0, 0),
+          axis.line.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank())
+}
+
 ################################################################################
 # plots
 ################################################################################
@@ -281,6 +337,7 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
                   paste0(unique(na.omit(df$anti_codon)), collapse = ", "), title)
     title <- gsub("\\{amino_acid\\}",
                   paste0(unique(na.omit(df$amino_acid)), collapse = ", "), title)
+    title <- gsub("\\{group\\}", paste0(unique(df$group), collapse = ", "), title)
     p <- p + ggtitle(title)
   }
 
@@ -362,6 +419,14 @@ add_groups <- function(group_opts, df, coverage_summary = NULL) {
       coverage_summary <- coverage_summary |>
         tidyr::unite(group, all_of(group_opts), sep = "-", remove = FALSE)
     }
+    # uniting gives a character column, which would sort the plots by name
+    if (length(group_opts) == 1 && is.factor(df[[group_opts]])) {
+      order <- levels(df[[group_opts]])
+      df$group <- factor(df$group, levels = order)
+      if (!is.null(coverage_summary)) {
+        coverage_summary$group <- factor(coverage_summary$group, levels = order)
+      }
+    }
   } else {
     df$group <- "_"
     if (!is.null(coverage_summary)) {
@@ -438,6 +503,10 @@ group_trna <- function(group_opts,
                          l$coverage_summary)
   # TODO catch NA
 
+  stacked <- list(heatmap = list(), heatmap_cov = list(), heatmap_mods = list())
+  counts <- c()
+  mod_abbrevs <- NULL
+
   for (group in names(groups$df)) {
     l <- process_group(groups$df[[group]],
                        groups$coverage_summary[[group]],
@@ -457,8 +526,7 @@ group_trna <- function(group_opts,
     #  "coverage_summary" = l$coverage_summary
     #)
         
-    sep <- ifelse(group == "_", "", "-")
-    fname_group <- ifelse(group == "_", "", group)
+    counts[group] <- length(unique(l$df$trna))
 
     ncol <- 1
     heatmap <- plot_heatmap(l$df,
@@ -468,22 +536,7 @@ group_trna <- function(group_opts,
                             title = plot_args$title,
                             show_ref = plot_args$show_ref,
                             show_mods = plot_args$show_mods)
-    output_fname <- file.path(output_dir, paste0(fname_group, sep, "heatmap.pdf"))
-    custom_ggsave(output_fname,
-                  heatmap,
-                  ggsave_opts = infer_ggsave_opts(df, ggsave_opts = opts$options$ggsave_opts),
-                  opts$options$no_crop)
-    plots <- dplyr::bind_rows(
-      plots,
-      tibble::tribble(
-        ~name,                            ~type, ~group, ~object,
-        output_fname,                     "pdf", group,  heatmap,
-        gsub("pdf$", "png", output_fname), "png", group,  heatmap,
-        gsub("pdf$", "rds", output_fname), "rds", group,  heatmap
-      )
-    )
-    # TODO remove
-    # group_plots[["heatmap"]] <- heatmap
+    stacked$heatmap[[group]] <- heatmap
 
     # add coverage summary
     if (!is.null(l$coverage_summary)) {
@@ -494,30 +547,8 @@ group_trna <- function(group_opts,
         plot_coverage(l$coverage_summary, opts, plot_args[["coverage_xlab"]]) +
         theme(axis.text.y = element_blank())
       
-      p <- heatmap +
+      stacked$heatmap_cov[[group]] <- heatmap +
         plot_layout(ncol = ncol, widths = widths)
-
-      ggsave_opts <- infer_ggsave_opts(l$df, l$coverage_summary,
-                                       ggsave_opts = opts$options$ggsave_opts)
-      ggsave_opts$width <- ggsave_opts$width + 3
-
-      output_fname <- file.path(output_dir, paste0(fname_group, sep, "heatmap_cov.pdf"))
-      custom_ggsave(output_fname,
-                    p,
-                    ggsave_opts = ggsave_opts,
-                    opts$options$no_crop)
-      plots <- dplyr::bind_rows(
-        plots,
-        tibble::tribble(
-          ~name,                            ~type, ~group, ~object,
-          output_fname,                     "pdf", group,  p,
-          gsub("pdf$", "png", output_fname), "png", group, p,
-          gsub("pdf$", "rds", output_fname), "rds", group, p
-        )
-      )
-      # TODO remove
-      # group_plots[["heatmap_cov"]] <- p
-      # group_plots[["coverage_summary"]] <- l$coverage_summary
     }
 
     # quick fix
@@ -539,32 +570,47 @@ group_trna <- function(group_opts,
         dplyr::filter(is.element(short_name, mods))
 
       heatmap <- heatmap + plot_mod_abbrevs_table(mod_abbrevs)
-      p <- heatmap +
+      stacked$heatmap_mods[[group]] <- heatmap +
         plot_layout(ncol = ncol, widths = widths)
-
-      ggsave_opts <- infer_ggsave_opts(l$df, l$coverage_summary, mod_abbrevs,
-                                      ggsave_opts = opts$options$ggsave_opts)
-      ggsave_opts$width <- ggsave_opts$width + 3
-
-      output_fname <- file.path(output_dir, paste0(fname_group, sep, "heatmap_mods.pdf"))
-      custom_ggsave(output_fname,
-                    p,
-                    ggsave_opts = ggsave_opts,
-                    opts$options$no_crop)
-      plots <- dplyr::bind_rows(
-        plots,
-        tibble::tribble(
-          ~name,                            ~type, ~group, ~object,
-          output_fname,                     "pdf", group,  p,
-          gsub("pdf$", "png", output_fname), "png", group, p,
-          gsub("pdf$", "rds", output_fname), "rds", group, p
-        )
-      )
-      # TODO remove
-      #  group_plots[["heatmap_mods"]] <- p
     }
     #TODO remove
     # plots[[group]] <- group_plots
+  }
+
+  # the groups are stacked into one figure, each with its own scales
+  for (variant in names(stacked)) {
+    if (length(stacked[[variant]]) == 0) {
+      next
+    }
+    # each group takes the height its tRNAs need
+    p <- patchwork::wrap_plots(stacked[[variant]], ncol = 1,
+                               heights = counts[names(stacked[[variant]])])
+
+    ggsave_opts <- infer_ggsave_opts(
+      df,
+      if (variant == "heatmap") NULL else coverage_summary,
+      if (variant == "heatmap_mods") mod_abbrevs else NULL,
+      ggsave_opts = opts$options$ggsave_opts)
+    if (variant != "heatmap") {
+      ggsave_opts$width <- ggsave_opts$width + 3
+    }
+    ggsave_opts$height <- ggsave_opts$height +
+      1.5 * (length(stacked[[variant]]) - 1)
+
+    output_fname <- file.path(output_dir, paste0(variant, ".pdf"))
+    custom_ggsave(output_fname,
+                  p,
+                  ggsave_opts = ggsave_opts,
+                  opts$options$no_crop)
+    plots <- dplyr::bind_rows(
+      plots,
+      tibble::tribble(
+        ~name,                            ~type, ~group, ~object,
+        output_fname,                     "pdf", "_",    p,
+        gsub("pdf$", "png", output_fname), "png", "_",   p,
+        gsub("pdf$", "rds", output_fname), "rds", "_",   p
+      )
+    )
   }
 
   return(plots)

@@ -101,6 +101,10 @@ option_list <- list(
               action = "store_true",
               default = FALSE,
               help = "Estimate coverage for tRNAs and show"),
+  make_option(c("--coverage_groups"),
+              action = "store_true",
+              default = FALSE,
+              help = "Stack tRNAs in one figure, grouped by median coverage"),
   # make_option(c("--show_ref"),
   #             action = "store_true",
   #             default = FALSE,
@@ -369,6 +373,20 @@ if (!is.null(opts$options$estimate_coverage)) {
   coverage_summary <- NULL
 }
 
+# cut on the median the coverage panel already plots
+group <- opts$options$group
+expression <- NULL
+if (isTRUE(opts$options$coverage_groups)) {
+  if (is.null(coverage_summary)) {
+    stop("--coverage_groups needs a coverage summary")
+  }
+  expression <- coverage_groups(coverage_summary)
+  bins <- dplyr::select(expression, all_of(c("trna", "coverage_group")))
+  df <- inner_join(df, bins, by = join_by(trna))
+  coverage_summary <- inner_join(coverage_summary, bins, by = join_by(trna))
+  group <- "coverage_group"
+}
+
 
 # add label from mods or mod. abbreviations
 if (!is.null(df$mods) && any(df$mods != "") && !opts$options$hide_mods) {
@@ -439,10 +457,29 @@ if (!is.null(opts$options$score_quantile)) {
 ################################################################################
 
 # group data and create plots
-plots <- group_trna(opts$options$group,
+plots <- group_trna(group,
                     df, coverage_summary,
                     opts$options$output_dir,
                     opts)
+
+if (!is.null(expression)) {
+  p <- plot_coverage_distribution(expression, opts$options$base_size,
+                                  get_plot_args(df, opts)[["coverage_xlab"]],
+                                  opts$options$remove_prefix)
+  output_fname <- file.path(opts$options$output_dir, "coverage_distribution.pdf")
+  custom_ggsave(output_fname, p,
+                ggsave_opts = list(width = 8, height = 2.6),
+                opts$options$no_crop)
+  plots <- dplyr::bind_rows(
+    plots,
+    tibble::tribble(
+      ~name,                            ~type, ~group, ~object,
+      output_fname,                     "pdf", "_",    p,
+      gsub("pdf$", "png", output_fname), "png", "_",   p,
+      gsub("pdf$", "rds", output_fname), "rds", "_",   p
+    )
+  )
+}
 
 r <- dplyr::select(plots, name, type, group)
 write.table(r, file.path(opts$options$output_dir, "files.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
