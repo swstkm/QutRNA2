@@ -254,6 +254,9 @@ plot_mod_abbrevs_table <- function(mod_abbrevs) {
 }
 
 
+Q_GATE <- 0.05
+
+
 plot_heatmap <- function(df, base_size = 9, xlab = "position",
                          harmonize_scaling = NULL,
                          title = NULL,
@@ -265,9 +268,13 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
       mutate(combined_label = paste0(ref, mod_label))
   }
 
+  df$tile <- ifelse(df$gate, .95, .3)
+  keys <- paste(c("q >=", "q <"), opts$options$gate_q)
+  df$gate_label <- factor(keys[df$gate + 1], levels = keys)
+
   p <- df |>
     ggplot(aes(x = position, y = trna_label, fill = score)) +
-    geom_tile(colour = "white", width = rel(.95), height = rel(.95)) +
+    geom_tile(aes(width = tile, height = tile), colour = "white") +
     ylab("") +
     xlab(xlab) +
     theme_bw(base_size = base_size) +
@@ -281,6 +288,15 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
           panel.grid.minor = element_blank(),
           axis.title.y = element_blank(),
           plot.margin = margin(0, .5, 0, 0))
+
+  # geom_tile sizes carry no key, so an unseen layer supplies one
+  if (any(!df$gate)) {
+    p <- p +
+      geom_point(aes(size = gate_label), alpha = 0, shape = 22,
+                 fill = "grey30", colour = NA) +
+      scale_size_manual(name = NULL, values = c(1.5, 4)) +
+      guides(size = guide_legend(override.aes = list(alpha = 1)))
+  }
 
   scale_f <- scale_fill_gradient
   if (opts$options$keep_negative_score) {
@@ -298,24 +314,26 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
               na.value = "grey")
   }
 
+  # an overlay drawing its own key would paint over the score key
   # mark flagged positions
   if (any(df$flag_position)) {
     p <- p + geom_point(data = df |>
                         filter(flag_position == TRUE),
-                        shape = 4, color = "darkred")
+                        shape = 4, color = "darkred", show.legend = FALSE)
   }
   # mark score exceeding max_score
   if (any(df$exceed_max_score)) {
     p <- p + geom_point(data = df |>
                         filter(exceed_max_score == TRUE),
-                        shape = 4, color = "red")
+                        shape = 4, color = "red", show.legend = FALSE)
   }
 
   # mark special positions
   if (any(df$mark_position)) {
     p <- p + geom_tile(data = df |>
                          filter(mark_position == TRUE),
-                       color = "red")
+                       aes(width = tile, height = tile),
+                       color = "red", show.legend = FALSE)
   }
 
   rel_size <- 1.7
@@ -674,7 +692,8 @@ remove_missing_positions <- function(df) {
 add_missing_values <- function(df, cols = c("trna_label", "position")) {
   fill <- list("exceed_max_score" = FALSE,
                "mark_position" = FALSE,
-               "flag_position" = FALSE)
+               "flag_position" = FALSE,
+               "gate" = TRUE)
 
   df <- tidyr::complete(df, !!! rlang::syms(cols), fill = fill)
 

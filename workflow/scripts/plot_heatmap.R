@@ -73,6 +73,13 @@ option_list <- list(
               type = "character",
               default = "MDI",
               help = "Score column to use"),
+  make_option(c("--gate_column"),
+              type = "character",
+              help = "Shrink tiles failing the gate, from a -log10(q) column"),
+  make_option(c("--gate_q"),
+              type = "double",
+              default = Q_GATE,
+              help = "q the gate keeps, default 0.05"),
   make_option(c("--sprinzl"),
               type = "character",
               help = "Path to sprinzl file with labels"),
@@ -352,6 +359,13 @@ if (opts$options$norm_score) {
     group_by(trna) |>
     mutate(score = score / max(score)) |>
     ungroup()
+}
+
+df$gate <- TRUE
+if (!is.null(opts$options$gate_column)) {
+  stopifnot(is.element(opts$options$gate_column, colnames(df)))
+  q <- df[, opts$options$gate_column]
+  df$gate <- !is.na(q) & q >= -log10(opts$options$gate_q)
 }
 
 df$exceed_max_score <- FALSE
