@@ -2,10 +2,11 @@ import enum
 import gzip
 import os
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from contextlib import nullcontext
 
 import click
+import pandas as pd
 import pysam
 
 
@@ -428,10 +429,9 @@ def filter(bam,
     # counter
     counter = Counter()
 
-    # load exact per-trna cutoffs from table for fast direct lookup.
-    # we intentionally key by exact reference name instead of regex matching.
-    # "__pooled__" is aln_score_cutoff_trna.py's summary row for its pooled-global
-    # cutoff, not a real reference name - skip it here.
+    # keyed by exact reference name rather than by regex.
+    # "__pooled__" is aln_score_cutoff_trna.py's summary row for its
+    # pooled-global cutoff, and no reference carries that name
     cutoff_by_trna = {}
     if cutoffs:
         cutoff_df = pd.read_csv(cutoffs, sep="\t")
