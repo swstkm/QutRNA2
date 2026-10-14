@@ -1,0 +1,20 @@
+name: conda solve
+
+# catches an edit that cannot be resolved by the solver
+on:
+  push:
+    paths: [conda.yaml, conda-lock-linux-64.yaml]
+  pull_request:
+    paths: [conda.yaml, conda-lock-linux-64.yaml]
+  workflow_dispatch:
+
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: $CONDA/bin/conda env create -f conda.yaml -n solve-check --dry-run
+
+      # the lockfile is the file installed by the container. pip entries
+      # are not checked
+      - run: $CONDA/bin/conda env create -f conda-lock-linux-64.yaml -n lock-check --dry-run

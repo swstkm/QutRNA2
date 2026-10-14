@@ -17,11 +17,34 @@ wildcard_constraints:
 # Default JACUSA2 score to use: label::score1+score2+... see add_scores.R
 DEFAULT_SCORE = "M_subsampled::norm_mismatch_score_subsampled"
 
+# seq is pep.yaml's declared default. pepschema does not apply it
+COORDS = pep.config["qutrna2"].get("coords", "seq")
+
 
 ########################################################################################################################
 
 def flatten_dict(d):
   return list(pd.json_normalize(d, sep="_").to_dict(orient="records")[0].values())
+
+########################################################################################################################
+
+def heatmap_plots(cond1, cond2):
+  """Heatmap configs to render for one contrast.
+
+  A plot is rendered where its `conditions` names cond1 or cond2.
+
+    conditions: [DNMT2]          wt vs DNMT2
+    conditions: [DNMT2, QTRT1]   wt vs DNMT2 and wt vs QTRT1
+    no conditions key            every contrast
+  """
+  plots = []
+  for plot in config["plots"]["heatmap"]:
+    conditions = plot.get("conditions")
+    if conditions and not set(conditions) & {cond1, cond2}:
+      continue
+    plots.append(plot)
+
+  return plots
 
 ########################################################################################################################
 
@@ -36,7 +59,9 @@ def create_include(name_, input_, output_, params_):
       if params.include == "copy":
         cmd = "cp"
       elif params.include == "link":
-        cmd = "ln -s"
+        # -r, because the link lands in a subdirectory and a relative target is
+        # read from there
+        cmd = "ln -sr"
 
       shell(cmd + " {input:q} {output:q}")
 
@@ -186,6 +211,13 @@ TBL = pep.sample_table
 CONDITIONS = [[contrast["cond1"], contrast["cond2"]] for contrast in pep.config["qutrna2"]["contrasts"]]
 CONDITIONS = set(itertools.chain(*CONDITIONS))
 TBL = TBL[TBL["condition"].isin(CONDITIONS)]
+
+# a mistyped condition would silently render the plot nowhere
+for _plot in config["plots"]["heatmap"]:
+  _unknown = set(_plot.get("conditions", [])) - CONDITIONS
+  if _unknown:
+    raise Exception(f"heatmap '{_plot['id']}' names condition(s) no contrast uses: "
+                    f"{sorted(_unknown)}; contrasts use {sorted(CONDITIONS)}")
 for c in ["subsample_name", "base_calling", READS]:
   i = [isinstance(o, list) for o in TBL[c]]
   if any(i):
@@ -200,7 +232,7 @@ SUBSAMPLES = TBL["subsample_name"].tolist()
 
 # seq or sprinzl coordinates and use optional mods annotation
 SCORES = "scores"
-if pep.config["qutrna2"]["coords"] == "sprinzl":
+if COORDS == "sprinzl":
   SCORES += "_sprinzl"
 else:
   SCORES += "_seq"

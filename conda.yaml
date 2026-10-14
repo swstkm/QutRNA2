@@ -7,7 +7,7 @@ channels:
   - defaults
 dependencies:
   - gpu-trna-mapper
-  - JACUSA2=2.1.16
+  - JACUSA2=2.1.17
   - bioconductor-summarizedexperiment
   - bioconductor-rsamtools
   - r-base
@@ -23,7 +23,8 @@ dependencies:
   - r-patchwork
   - r-tinytex
   - r-yardstick
-  - infernal
+  # pinned: cmalign's alignment decides the Sprinzl coordinates
+  - infernal=1.1.5
   - jinja2
   - yaml
   - click
@@ -33,4 +34,11 @@ dependencies:
   - samtools
   - snakemake=9.8
   - snakemake-executor-plugin-slurm
-prefix: /home/mpiechotta/miniconda3/envs/qutrna2
+  - pytest
+  - viennarna
+  # forgi comes from pip instead: bioconda has no py312 build
+  - pip
+  - pip:
+    # pinned: sprinx assigns the Sprinzl labels, and its labeling logic is still
+    # changing, so an unpinned revision would move published coordinates.
+    - git+https://github.com/dieterich-lab/sprinx.git@v0.2.0

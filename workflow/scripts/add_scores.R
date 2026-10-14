@@ -114,7 +114,7 @@ read_result <- function(file, tmpdir = tempdir(), showProgress = FALSE, ...) {
   jacusa_header <- c()
   while (TRUE) {
     line <- readLines(con, n = 1)
-    # quit reading: nothing to read or first no header line
+    # stop at end of file, or at the first line that does not start with #
     if (length(line) == 0 || length(grep("^#", line)) == 0) {
       break
     }
@@ -132,11 +132,18 @@ read_result <- function(file, tmpdir = tempdir(), showProgress = FALSE, ...) {
 
   }
   # finished pre-processing
+  # the loop stops on the first data line, or on EOF when there is none
+  has_data <- length(line) > 0
   close(con)
 
   # check that a header could be parsed
   if (is.null(header_names)) {
     stop("No header line for file: ", file)
+  }
+
+  if (!has_data) {
+    stop("Header but no data rows in file: ", file,
+         ". Likely no position reaches min_cov in every replicate.")
   }
 
   # read data

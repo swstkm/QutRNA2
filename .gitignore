@@ -1,3 +1,4 @@
 qutrna2.sif
-.vscode
-.claude
+__pycache__/
+*.pyc
+.vscode/
