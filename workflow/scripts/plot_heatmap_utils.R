@@ -295,7 +295,10 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
       geom_point(aes(size = gate_label), alpha = 0, shape = 22,
                  fill = "grey30", colour = NA) +
       scale_size_manual(name = NULL, values = c(1.5, 4)) +
-      guides(size = guide_legend(override.aes = list(alpha = 1)))
+      # without an explicit order the two guides swap between blocks
+      guides(fill = guide_colourbar(order = 1),
+             size = guide_legend(order = 2,
+                                 override.aes = list(alpha = 1)))
   }
 
   scale_f <- scale_fill_gradient
