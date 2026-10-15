@@ -269,7 +269,7 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
   }
 
   df$tile <- ifelse(df$gate, .95, .3)
-  keys <- paste(c("q >=", "q <"), opts$options$gate_q)
+  keys <- paste(c("FDR >=", "FDR <"), opts$options$gate_q)
   df$gate_label <- factor(keys[df$gate + 1], levels = keys)
 
   p <- df |>
