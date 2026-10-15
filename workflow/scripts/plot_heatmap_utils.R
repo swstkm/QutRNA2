@@ -26,15 +26,19 @@ get_process_args <- function(opts) {
 }
 
 get_plot_args <- function(df, opts) {
-  title <- NULL
-  if (!is.null(opts$options$title)) {
-    title <- opts$options$title
-    title <- gsub("\\{condition1\\}", opts$options$condition1, title)
-    title <- gsub("\\{condition2\\}", opts$options$condition2, title)
-    title <- gsub("\\{score\\}", opts$options$score_column, title)
-    title <- gsub("\\{bam_type\\}", opts$options$bam_type, title)
-    title <- gsub("\\{position_column\\}", opts$options$position_column, title)
+  fill_in <- function(template) {
+    if (is.null(template)) {
+      return(NULL)
+    }
+    template <- gsub("\\{condition1\\}", opts$options$condition1, template)
+    template <- gsub("\\{condition2\\}", opts$options$condition2, template)
+    template <- gsub("\\{score\\}", opts$options$score_column, template)
+    template <- gsub("\\{bam_type\\}", opts$options$bam_type, template)
+    gsub("\\{position_column\\}", opts$options$position_column, template)
   }
+
+  title <- fill_in(opts$options$title)
+  figure_title <- fill_in(opts$options$figure_title)
 
   position_xlab <- "position"
   if (opts$options$position_column == "sprinzl") {
@@ -85,6 +89,7 @@ get_plot_args <- function(df, opts) {
 
   return(list(
     "title" = title,
+    "figure_title" = figure_title,
     "position_xlab" = position_xlab,
     "coverage_xlab" = coverage_xlab,
     "harmonize_scaling" = harmonize_scaling,
@@ -152,10 +157,13 @@ coverage_groups <- function(coverage_summary, whisker = 1.5) {
   edges <- c(quartiles, quartiles[2] + whisker * diff(quartiles))
   expression$bin <- cut(reads, c(-Inf, edges, Inf), labels = FALSE)
 
-  # the label states the range it was cut on
+  # each bin is named by its coverage range and by its part of the boxplot
+  parts <- c("lowest quartile", "middle half", "upper quartile",
+             "beyond 1.5 IQR")
   labels <- expression |>
     group_by(bin) |>
-    summarise(label = sprintf("%.0f-%.0f reads", min(reads), max(reads)),
+    summarise(label = sprintf("%.0f-%.0f reads, %s", min(reads), max(reads),
+                              parts[first(bin)]),
               .groups = "drop")
 
   expression |>
@@ -606,6 +614,10 @@ group_trna <- function(group_opts,
     # each group takes the height its tRNAs need
     p <- patchwork::wrap_plots(stacked[[variant]], ncol = 1,
                                heights = counts[names(stacked[[variant]])])
+    # one title above the stack, beside the per-block coverage ranges
+    if (!is.null(plot_args$figure_title)) {
+      p <- p + patchwork::plot_annotation(title = plot_args$figure_title)
+    }
 
     ggsave_opts <- infer_ggsave_opts(
       df,
