@@ -708,7 +708,8 @@ add_missing_values <- function(df, cols = c("trna_label", "position")) {
   fill <- list("exceed_max_score" = FALSE,
                "mark_position" = FALSE,
                "flag_position" = FALSE,
-               "gate" = TRUE)
+               # a position the tRNA lacks was never tested. Its tile stays small
+               "gate" = FALSE)
 
   df <- tidyr::complete(df, !!! rlang::syms(cols), fill = fill)
 
