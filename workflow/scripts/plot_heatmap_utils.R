@@ -262,7 +262,7 @@ plot_mod_abbrevs_table <- function(mod_abbrevs) {
 }
 
 
-Q_GATE <- 0.05
+FDR_GATE <- 0.05
 
 
 plot_heatmap <- function(df, base_size = 9, xlab = "position",
@@ -277,7 +277,7 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
   }
 
   df$tile <- ifelse(df$gate, .95, .3)
-  keys <- paste(c("FDR >=", "FDR <"), opts$options$gate_q)
+  keys <- paste(c("FDR >=", "FDR <"), opts$options$gate_fdr)
   df$gate_label <- factor(keys[df$gate + 1], levels = keys)
 
   p <- df |>

@@ -75,11 +75,11 @@ option_list <- list(
               help = "Score column to use"),
   make_option(c("--gate_column"),
               type = "character",
-              help = "Shrink tiles failing the gate, from a -log10(q) column"),
-  make_option(c("--gate_q"),
+              help = "Shrink tiles failing the gate, from a -log10(FDR) column"),
+  make_option(c("--gate_fdr"),
               type = "double",
-              default = Q_GATE,
-              help = "q the gate keeps, default 0.05"),
+              default = FDR_GATE,
+              help = "FDR the gate keeps, default 0.05"),
   make_option(c("--sprinzl"),
               type = "character",
               help = "Path to sprinzl file with labels"),
@@ -367,8 +367,8 @@ if (opts$options$norm_score) {
 df$gate <- TRUE
 if (!is.null(opts$options$gate_column)) {
   stopifnot(is.element(opts$options$gate_column, colnames(df)))
-  q <- df[, opts$options$gate_column]
-  df$gate <- !is.na(q) & q >= -log10(opts$options$gate_q)
+  fdr <- df[, opts$options$gate_column]
+  df$gate <- !is.na(fdr) & fdr >= -log10(opts$options$gate_fdr)
 }
 
 df$exceed_max_score <- FALSE
