@@ -282,7 +282,9 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
 
   p <- df |>
     ggplot(aes(x = position, y = trna_label, fill = score)) +
-    geom_tile(aes(width = tile, height = tile), colour = "white") +
+    # a warm hairline edge keeps a low-score tile apart from the page
+    geom_tile(aes(width = tile, height = tile), colour = "#D8C180",
+              linewidth = .05) +
     ylab("") +
     xlab(xlab) +
     theme_bw(base_size = base_size) +
