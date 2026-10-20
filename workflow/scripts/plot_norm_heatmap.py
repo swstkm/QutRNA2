@@ -216,7 +216,8 @@ def key_band(fig, ax, scale, gate):
     for side, sign in ((KEY_SMALL, ">="), (KEY_LARGE, "<")):
         fig.add_artist(Rectangle(
             spot(at - side / 2, KEY_Y - side / 2, side, side)[:2],
-            side / width, side / height, facecolor=AXIS, edgecolor="none"))
+            side / width, side / height, facecolor="none", edgecolor=AXIS,
+            linewidth=.7))
         label = f"FDR {sign} {gate}"
         text(at + KEY_GAP, KEY_Y + 2.4, label)
         at += KEY_GAP + text_width([label], TICK) + KEY_GAP
