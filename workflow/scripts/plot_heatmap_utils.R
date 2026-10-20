@@ -303,7 +303,7 @@ plot_heatmap <- function(df, base_size = 9, xlab = "position",
   if (any(!df$gate)) {
     p <- p +
       geom_point(aes(size = gate_label), alpha = 0, shape = 22,
-                 fill = "grey30", colour = NA) +
+                 fill = NA, colour = "grey30") +
       scale_size_manual(name = NULL, values = c(1.5, 4)) +
       # without an explicit order the two guides swap between blocks
       guides(fill = guide_colourbar(order = 1),
