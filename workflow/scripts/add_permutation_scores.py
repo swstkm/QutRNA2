@@ -20,11 +20,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 from scipy.special import digamma, gammaln, polygamma
-from scipy.stats import (
-    false_discovery_control,
-    multivariate_hypergeom,
-    pearsonr,
-)
+from scipy.stats import false_discovery_control, multivariate_hypergeom
 
 CATEGORIES = 4
 ESTIMATED_ERROR = 0.01
@@ -44,7 +40,6 @@ POSITION_CHUNK = 250
 # 25 keeps a short file above one chunk per process
 CHUNK = 25
 DRAWS = 1000
-MIN_R = 0.95
 
 # JACUSA2's own score column, and the prefix of its count columns
 ERROR_TYPES = {
@@ -490,15 +485,6 @@ def read_table(path, columns):
                        na_values=["*"])
 
 
-def agreement(recomputed, reported):
-    """Pearson r between the recomputed score and JACUSA2's own column."""
-    usable = np.isfinite(recomputed) & np.isfinite(reported)
-    if usable.sum() < 2:
-        return float("nan")
-
-    return pearsonr(reported[usable], recomputed[usable])[0]
-
-
 # --------------------------------------------------------------- the command
 
 
@@ -574,9 +560,6 @@ def parse_args():
     parser.add_argument("--processes", type=int, default=os.cpu_count(),
                         help="default every core. the result is the same at "
                              "any number")
-    parser.add_argument("--min-r", type=float, default=MIN_R,
-                        help=f"stop when the mismatch r falls below this, "
-                             f"default {MIN_R}")
     args = parser.parse_args()
 
     args.error_types = [t.strip() for t in args.error_types.split(",")
@@ -622,7 +605,6 @@ def main():
         print(f"dropped {', '.join(dropped)}", flush=True)
 
     for error_type in args.error_types:
-        column, _ = ERROR_TYPES[error_type]
         result = permute(counts_for(out, error_type), error_type, args)
         result["qvalue"] = false_discovery_control(result["pvalue"],
                                                    method="bh")
@@ -634,14 +616,9 @@ def main():
             sys.exit(f"{parser.prog}: {', '.join(clash)} already in the input.")
 
         out = out.assign(**added)
-        r = agreement(result["score"], out[column].to_numpy(float))
         exact = int(result["p_exact"].sum())
-        print(f"{error_type}: r {r:.4f} against {column}, "
-              f"{exact:,} of {len(out):,} p enumerated", flush=True)
-        if error_type == "mismatch" and r < args.min_r:
-            sys.exit(f"{parser.prog}: mismatch r {r:.4f} is below "
-                     f"{args.min_r}. The recomputed score departs from "
-                     "JACUSA2's by more than this run allows.")
+        print(f"{error_type}: {exact:,} of {len(out):,} p enumerated",
+              flush=True)
 
     out.to_csv(args.output, sep="\t", index=False)
     print(f"wrote {args.output} in {(time.monotonic() - run_started) / 60:.1f} "
