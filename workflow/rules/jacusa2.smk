@@ -85,6 +85,22 @@ rule jacusa2_add_scores:
   """
 
 
+rule jacusa2_permutation:
+  input: "results/jacusa2/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}/JACUSA2.out"
+  output: "results/jacusa2/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}/permutation.tsv"
+  conda: "qutrna2"
+  log: "logs/jacusa2/permutation/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}.log"
+  benchmark: repeat("benchmarks/jacusa2/permutation/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}.txt", config.get("_benchmark_repeats", 1))
+  threads: workflow.cores
+  shell: """
+    python {workflow.basedir:q}/scripts/add_permutation_scores.py \
+        --seed 42 \
+        --processes {threads} \
+        -o {output:q} \
+        {input:q} > {log:q} 2>&1
+  """
+
+
 if "mods" in pep.config["qutrna2"]:
 
   rule jacusa2_add_mods:

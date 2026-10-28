@@ -13,6 +13,7 @@ dependencies:
   - pytest
   - snakemake=9.8
   - pandas
+  - scipy
   - pyyaml
   - peppy
   - eido

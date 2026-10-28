@@ -172,6 +172,29 @@ checkpoint plot_heatmap:
   """
 
 
+def _plot_normalized_heatmap_input(wildcards):
+  input = {"perm": "results/jacusa2/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}/permutation.tsv"}
+  if COORDS == "sprinzl":
+    input["sprinzl"] = "results/jacusa2/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}/scores_sprinzl.tsv"
+
+  return input
+
+
+rule plot_normalized_heatmap:
+  input: unpack(_plot_normalized_heatmap_input)
+  output: "results/plots/normalized/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}/normalized_heatmap.pdf"
+  conda: "qutrna2"
+  log: "logs/plot/normalized_heatmap/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}.log"
+  params: sprinzl=lambda wildcards, input: f"--sprinzl {input.sprinzl}" if "sprinzl" in input.keys() else ""
+  shell: """
+    python {workflow.basedir:q}/scripts/plot_norm_heatmap.py \
+        --conditions '{wildcards.COND1},{wildcards.COND2}' \
+        --out {output:q} \
+        {params.sprinzl} \
+        {input.perm:q} > {log:q} 2>&1
+  """
+
+
 rule plot_record_count:
   input: "results/stats/record_count.txt"
   output: pdf="results/plots/record_count/{FEATURE}.pdf",

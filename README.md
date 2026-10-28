@@ -295,7 +295,9 @@ The directory `<ANALYSIS_OUTPUT>/results/jacusa2` will contain JACUSA2 results f
 ## Plots
 The directory `<ANALYSIS_OUTPUT>/results/plots` will contain plots. These are heatmaps of the JACUSA2 scores across tRNA positions or all tRNAs that the reads were mapped to and retained after filtering.
 
-Check `<ANALYSIS_OUTPUT>/results/plots/scores/cond1~{cond1}/cond2~{cond2}/{id}/bam~final/heatmap.pdf`.
+Check `<ANALYSIS_OUTPUT>/results/plots/scores/cond1~{cond1}/cond2~{cond2}/{id}/bam~final/subsampling_normalized_heatmap.pdf`.
+
+`<ANALYSIS_OUTPUT>/results/plots/normalized/cond1~{cond1}/cond2~{cond2}/bam~final/normalized_heatmap.pdf` shows the permutation-normalized score of each contrast. JACUSA2 reports one score per position. The permutation re-splits the pooled reads of both conditions, with the replicates of each condition summed, and scores each re-split. A tile's colour is the observed score minus the largest re-split score, summed over mismatches, deletions and insertions. A large tile marks a position whose lowest FDR is below 0.05, with one Benjamini-Hochberg correction over all three error types. The table behind it is `<ANALYSIS_OUTPUT>/results/jacusa2/cond1~{cond1}/cond2~{cond2}/bam~final/permutation.tsv`.
 
 ### stats
 If filters were applied, the directory `<ANALYSIS_OUTPUT>/results/stats` will contain summary statistics for features such as alignment score, read length, and read count.

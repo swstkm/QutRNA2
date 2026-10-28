@@ -3,8 +3,8 @@
 input:   the tsv add_permutation_scores.py writes, one row per position
 output:  --out, a pdf with tRNAs down the page and positions across
 usage:   python plot_norm_heatmap.py WT_KO.perm.tsv --out heatmap.pdf
-env:     python3 with numpy, pandas, scipy, matplotlib
-notes:   BH runs once over the three error types together. a tile's colour is
+env:     python3 with numpy, pandas, matplotlib
+notes:   a position is called on its lowest FDR. a tile's colour is
          the summed score minus max null, and its size says whether the FDR
          is below --fdr. a position the tRNA lacks is drawn grey. --sprinzl
          renames the positions, --trnas keeps a subset, --mark draws a red box
@@ -20,7 +20,6 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Rectangle
 from matplotlib.textpath import TextPath
 from matplotlib.ticker import AutoMinorLocator, FuncFormatter, MaxNLocator
-from scipy.stats import false_discovery_control
 
 TYPES = ("mismatch", "deletion", "insertion")
 # ggplot's yellow to blue in Lab, sampled at nine steps
@@ -47,17 +46,16 @@ KEY_Y, KEY_SMALL, KEY_LARGE = 28.6, 3.35, 8.08
 
 
 def coverage(table, condition):
-    """Base calls plus deletions in one condition, per position."""
-    counts = table[f"bases{condition}1"]
-    bases = counts.str.split(",", expand=True).astype(float).sum(axis=1)
-    return bases + table[f"deletions{condition}1"]
+    """Base calls plus deletions in one condition, summed over replicates."""
+    bases = table.filter(regex=rf"^bases{condition}\d+$").stack()
+    bases = bases.str.split(",", expand=True).astype(float).sum(axis=1)
+    deletions = table.filter(regex=rf"^deletions{condition}\d+$").sum(axis=1)
+    return bases.groupby(level=0).sum() + deletions
 
 
 def scored(table, gate):
-    """Add the normalized score, the FDR and whether the position is called."""
-    pvalues = table[[f"perm_{t}_pvalue" for t in TYPES]].to_numpy(float)
-    rates = false_discovery_control(pvalues.ravel(), method="bh")
-    rates = rates.reshape(pvalues.shape)
+    """Add the normalized score and whether the position is called."""
+    rates = table[[f"perm_{t}_fdr" for t in TYPES]]
     margins = table[[f"perm_{t}_score_minus_max_null" for t in TYPES]]
     return table.assign(norm_score=margins.sum(axis=1),
                         called=rates.min(axis=1) < gate,

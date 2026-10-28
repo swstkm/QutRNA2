@@ -140,7 +140,7 @@
       {% for stem, path in covs.items %}
       <figure>
         <figcaption>
-          Heatmap plot with coverage{% if stem != "heatmap_cov" %},
+          Heatmap plot with coverage{% if stem != "subsampling_normalized_heatmap_cov" %},
           {{ stem[:-4] | replace("heatmap_", "") | replace("_", " ") }}{% endif %} :
           <span class="pdf">{{ path | pdf }}</span>
         </figcaption>

@@ -1,12 +1,12 @@
-"""add_permutation_scores.py - permutation p and BH q over a JACUSA2 call-2 run
+"""add_permutation_scores.py - permutation p and BH FDR over a JACUSA2 call-2 run
 
-input:   a JACUSA2 call-2 output file, two conditions of one replicate each
+input:   a JACUSA2 call-2 output file, two conditions, replicates summed
 output:  a TSV of the JACUSA2 columns bar the subsampled ones, plus the
          permutation columns
 usage:   python add_permutation_scores.py JACUSA2.out -o perm.tsv --seed 42
 env:     python3 with numpy, scipy, pandas. JACUSA2 is not called
 notes:   new columns are perm_<type>_<name>. type is mismatch, deletion or
-         insertion. name is score, score_minus_max_null, pvalue, qvalue,
+         insertion. name is score, score_minus_max_null, pvalue, fdr,
          p_exact or n_splits
 """
 import os
@@ -41,13 +41,13 @@ POSITION_CHUNK = 250
 CHUNK = 25
 DRAWS = 1000
 
-# JACUSA2's own score column, and the prefix of its count columns
+# the prefix of JACUSA2's count columns
 ERROR_TYPES = {
-    "mismatch": ("score", "bases"),
-    "deletion": ("deletion_score", "deletions"),
-    "insertion": ("insertion_score", "insertions"),
+    "mismatch": "bases",
+    "deletion": "deletions",
+    "insertion": "insertions",
 }
-ADDED_COLUMNS = ["score", "score_minus_max_null", "pvalue", "qvalue",
+ADDED_COLUMNS = ["score", "score_minus_max_null", "pvalue", "fdr",
                  "p_exact", "n_splits"]
 
 
@@ -425,26 +425,18 @@ def count_replicates(columns):
 
 
 def check_shape(columns):
-    """Raise InputError unless the result is two conditions of one replicate."""
-    replicates = count_replicates(columns)
-    if sorted(replicates) != [1, 2]:
-        raise InputError(f"expected two conditions, found "
-                         f"{sorted(replicates) or 'none'}.")
-
-    crowded = {c: n for c, n in replicates.items() if n > 1}
-    if crowded:
-        listed = ", ".join(f"condition {c} has {n}" for c, n in crowded.items())
-        raise InputError(f"expected one replicate per condition, {listed}. Run "
-                         "JACUSA2 per replicate pair, or merge the BAMs "
-                         "first.")
+    """Raise InputError unless the result has two conditions."""
+    found = sorted(count_replicates(columns))
+    if found != [1, 2]:
+        raise InputError(f"expected two conditions, found {found or 'none'}.")
 
 
 def check_columns(columns, error_types):
     """Raise InputError naming the -f option when a needed column is absent."""
     needed = {"bases11", "bases21"}
     for error_type in error_types:
-        column, counts = ERROR_TYPES[error_type]
-        needed |= {column, f"{counts}11", f"{counts}21"}
+        counts = ERROR_TYPES[error_type]
+        needed |= {f"{counts}11", f"{counts}21"}
         if error_type != "mismatch":
             needed |= {"deletions11", "deletions21"}
 
@@ -465,18 +457,31 @@ def counts_for(table, error_type):
     """Both conditions' counts for one error type, each (N, K).
 
     Mismatches read the ACGT vectors, indels the reads with the indel against
-    the reads spanning the position.
+    the reads spanning the position. Replicates of a condition are summed.
     """
-    _, counts = ERROR_TYPES[error_type]
+    counts = ERROR_TYPES[error_type]
+    bases = [sum(acgt(table[c]) for c in replicates(table, "bases", condition))
+             for condition in (1, 2)]
     if error_type == "mismatch":
-        return tuple(acgt(table[f"bases{c}1"]) for c in (1, 2))
+        return tuple(bases)
 
-    spanning = [acgt(table[f"bases{c}1"]).sum(1) + table[f"deletions{c}1"].values
-                for c in (1, 2)]
+    found = [summed(table, counts, c) for c in (1, 2)]
+    spanning = [b.sum(1) + summed(table, "deletions", c)
+                for c, b in zip((1, 2), bases)]
 
-    return tuple(np.c_[table[f"{counts}{c}1"].values,
-                       total - table[f"{counts}{c}1"].values].astype(float)
-                 for c, total in zip((1, 2), spanning))
+    return tuple(np.c_[n, total - n].astype(float)
+                 for n, total in zip(found, spanning))
+
+
+def replicates(table, prefix, condition):
+    """The column names <prefix><condition><replicate>."""
+    return [c for c in table.columns
+            if re.fullmatch(rf"{prefix}{condition}\d+", c)]
+
+
+def summed(table, prefix, condition):
+    """One count column summed over a condition's replicates."""
+    return table[replicates(table, prefix, condition)].sum(axis=1).values
 
 
 def read_table(path, columns):
@@ -592,7 +597,7 @@ def main():
     columns[0] = "contig"
     out = read_table(args.jacusa2_out, columns)
     # one value per subsampling run is 99 per cent of the file. that statistic
-    # is replaced by the permutation q. without a fixed seed, its columns
+    # is replaced by the permutation FDR. without a fixed seed, its columns
     # differ between runs over the same data
     dropped = [c for c in out.columns if c.endswith("_subsampled")]
     out = out.drop(columns=dropped)
@@ -604,10 +609,15 @@ def main():
     if dropped:
         print(f"dropped {', '.join(dropped)}", flush=True)
 
-    for error_type in args.error_types:
-        result = permute(counts_for(out, error_type), error_type, args)
-        result["qvalue"] = false_discovery_control(result["pvalue"],
-                                                   method="bh")
+    results = {t: permute(counts_for(out, t), t, args)
+               for t in args.error_types}
+    # one BH family over every error type. MDI calls a position when any of
+    # its tests passes, and needs no second correction
+    pvalues = np.concatenate([r["pvalue"] for r in results.values()])
+    rates = np.split(false_discovery_control(pvalues, method="bh"),
+                     len(results))
+    for (error_type, result), fdr in zip(results.items(), rates):
+        result["fdr"] = fdr
 
         added = {f"perm_{error_type}_{name}": result[name]
                  for name in ADDED_COLUMNS}

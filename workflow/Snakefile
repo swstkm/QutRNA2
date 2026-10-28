@@ -72,6 +72,9 @@ def target_trna_plots():
         expand(dname,
           cond1=cond1, cond2=cond2,
           plot_id=plot["id"], bam_type=bam_types))
+    targets.extend(
+      expand("results/plots/normalized/cond1~{cond1}/cond2~{cond2}/bam~{bam_type}/normalized_heatmap.pdf",
+        cond1=cond1, cond2=cond2, bam_type=bam_types))
 
   return targets
 

@@ -456,7 +456,7 @@ group_trna <- function(group_opts,
                             title = plot_args$title,
                             show_ref = plot_args$show_ref,
                             show_mods = plot_args$show_mods)
-    output_fname <- file.path(output_dir, paste0(fname_group, sep, "heatmap.pdf"))
+    output_fname <- file.path(output_dir, paste0(fname_group, sep, "subsampling_normalized_heatmap.pdf"))
     custom_ggsave(output_fname,
                   heatmap,
                   ggsave_opts = infer_ggsave_opts(df, ggsave_opts = opts$options$ggsave_opts),
@@ -489,7 +489,7 @@ group_trna <- function(group_opts,
                                        ggsave_opts = opts$options$ggsave_opts)
       ggsave_opts$width <- ggsave_opts$width + 3
 
-      output_fname <- file.path(output_dir, paste0(fname_group, sep, "heatmap_cov.pdf"))
+      output_fname <- file.path(output_dir, paste0(fname_group, sep, "subsampling_normalized_heatmap_cov.pdf"))
       custom_ggsave(output_fname,
                     p,
                     ggsave_opts = ggsave_opts,
@@ -534,7 +534,7 @@ group_trna <- function(group_opts,
                                       ggsave_opts = opts$options$ggsave_opts)
       ggsave_opts$width <- ggsave_opts$width + 3
 
-      output_fname <- file.path(output_dir, paste0(fname_group, sep, "heatmap_mods.pdf"))
+      output_fname <- file.path(output_dir, paste0(fname_group, sep, "subsampling_normalized_heatmap_mods.pdf"))
       custom_ggsave(output_fname,
                     p,
                     ggsave_opts = ggsave_opts,

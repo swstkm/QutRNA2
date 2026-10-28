@@ -10,6 +10,7 @@ set-threads:
   parasail_map: 8
   parasail_gpu_assisted: 10
   jacusa2_run: 14
+  jacusa2_permutation: 14
   parasail_gpu_assisted_postprocess: 4
   samtools_bam_index: 2
   samtools_merge: 2
