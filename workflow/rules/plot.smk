@@ -185,10 +185,12 @@ rule plot_normalized_heatmap:
   output: "results/plots/normalized/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}/normalized_heatmap.pdf"
   conda: "qutrna2"
   log: "logs/plot/normalized_heatmap/cond1~{COND1}/cond2~{COND2}/bam~{bam_type}.log"
-  params: sprinzl=lambda wildcards, input: f"--sprinzl {input.sprinzl}" if "sprinzl" in input.keys() else ""
+  params: sprinzl=lambda wildcards, input: f"--sprinzl {input.sprinzl}" if "sprinzl" in input.keys() else "",
+          fdr=config["jacusa2"]["fdr"]
   shell: """
     python {workflow.basedir:q}/scripts/plot_norm_heatmap.py \
         --conditions '{wildcards.COND1},{wildcards.COND2}' \
+        --fdr {params.fdr} \
         --out {output:q} \
         {params.sprinzl} \
         {input.perm:q} > {log:q} 2>&1

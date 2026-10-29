@@ -117,6 +117,10 @@ properties:
       min_cov:
         type: integer
         default: 10
+      fdr:
+        type: number
+        description: FDR below which a site is called on the normalized heatmap. Tests no permutation reaches get more permutations until they pass it
+        default: 0.05
     default: {}
   cmalign:
     type: object

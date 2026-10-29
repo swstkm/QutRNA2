@@ -1,19 +1,21 @@
 """add_permutation_scores.py - permutation p and BH FDR over a JACUSA2 call-2 run
 
-input:   a JACUSA2 call-2 output file, two conditions, replicates summed
+input:   a JACUSA2 call-2 output file, two conditions, any replicates each
 output:  a TSV of the JACUSA2 columns bar the subsampled ones, plus the
          permutation columns
 usage:   python add_permutation_scores.py JACUSA2.out -o perm.tsv --seed 42
 env:     python3 with numpy, scipy, pandas. JACUSA2 is not called
 notes:   new columns are perm_<type>_<name>. type is mismatch, deletion or
          insertion. name is score, score_minus_max_null, pvalue, fdr,
-         p_exact or n_splits
+         p_exact, n_splits or n_permutations
 """
+import itertools
 import os
 import re
 import sys
 import time
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from contextlib import nullcontext
 from functools import partial
 from multiprocessing import Pool
 
@@ -30,16 +32,20 @@ EPSILON = 0.001
 BACKTRACK_LAMBDA = 0.9
 INDEL_PSEUDOCOUNT = 1.0
 
-# past this many re-splits a position is sampled
-SPLIT_LIMIT = 1_000_000
-# one fit call over many positions pays the setup once
+# one fit call over many positions pays the setup once, and bounds memory
 BATCH_TABLES = 250_000
 # the slack keeps the observed split inside its own tail
 TIE_TOLERANCE = 1e-9
 POSITION_CHUNK = 250
 # 25 keeps a short file above one chunk per process
 CHUNK = 25
+# also the table count up to which a position is enumerated, and the
+# permutations the normalized score reads, as JACUSA2's subsampleRuns=1000
 DRAWS = 1000
+# each round multiplies the permutations of the tests none has reached
+REDRAW = 10
+# the heatmap's call cutoff, which also ends the rounds
+FDR = 0.05
 
 # the prefix of JACUSA2's count columns
 ERROR_TYPES = {
@@ -48,7 +54,7 @@ ERROR_TYPES = {
     "insertion": "insertions",
 }
 ADDED_COLUMNS = ["score", "score_minus_max_null", "pvalue", "fdr",
-                 "p_exact", "n_splits"]
+                 "p_exact", "n_splits", "n_permutations"]
 
 
 class InputError(Exception):
@@ -173,6 +179,19 @@ def fit(data, *, fallback=False):
     return alpha, loglik(alpha, data), converged
 
 
+def single_replicate_loglik(data):
+    """The fit of a single replicate, (N, 1, K), in closed form.
+
+    One count vector shows no overdispersion: the likelihood rises without
+    bound in the precision, towards sum of x log(x / N). Returns that limit
+    and an all-true convergence mask.
+    """
+    counts = data[:, 0]
+    loglik = (counts * np.log(counts / counts.sum(-1, keepdims=True))).sum(-1)
+
+    return loglik, np.ones(len(counts), dtype=bool)
+
+
 def _with_replicates(counts):
     """Add a replicate axis where one is absent. Takes (N, K) or (N, R, K)."""
     counts = np.asarray(counts, dtype=float)
@@ -189,7 +208,8 @@ def log_likelihood_ratio(table1, table2):
     data = [table1, table2]
     data.append(np.concatenate(data, axis=1))
 
-    logliks, fit_converged = zip(*(fit(d)[1:] for d in data))
+    logliks, fit_converged = zip(*(single_replicate_loglik(d) if d.shape[1] == 1
+                                   else fit(d)[1:] for d in data))
     converged = np.logical_and.reduce(fit_converged)
 
     # JACUSA2 refits all three estimates on the fallback init if any one fails.
@@ -197,7 +217,8 @@ def log_likelihood_ratio(table1, table2):
     logliks = [ll.copy() for ll in logliks]
     if not converged.all():
         for ll, d in zip(logliks, data):
-            ll[~converged] = fit(d[~converged], fallback=True)[1]
+            if d.shape[1] > 1:
+                ll[~converged] = fit(d[~converged], fallback=True)[1]
 
     return logliks[0] + logliks[1] - logliks[2], converged
 
@@ -232,12 +253,12 @@ def scorer_for(error_type, qual):
 
 
 # ----------------------------------------------------------- the permutation
-# pool the counts of one position
-# re-split into groups of the original sizes, without replacement
-# read the observed score against the re-split scores
+# pool the reads of every replicate at one position
+# permute them back to each replicate at its own depth, without replacement
+# read the observed score against the scores of the permutations
 
 
-def enumerate_splits(pooled, size, limit=SPLIT_LIMIT):
+def enumerate_splits(pooled, size, limit):
     """Every distinct re-split of one position, as (S, K). Past limit, None.
 
     Categories are added one at a time. A partial vector survives while it has
@@ -263,29 +284,64 @@ def enumerate_splits(pooled, size, limit=SPLIT_LIMIT):
     return rows if len(rows) <= limit else None
 
 
-def exact_tail(pooled, counts1, observed, scorer, limit=SPLIT_LIMIT):
-    """Exact p for every position whose re-splits fit under limit.
+def enumerate_tables(pooled, depths, limit):
+    """Every table of the pooled counts with the given group depths fixed.
 
-    Returns the p and the re-split count. A count of zero marks a position left
-    to the sampler.
+    Returns (S, R, K), or None past limit tables. The last group takes what
+    the others leave.
     """
-    # counts arrive float for the scorer. the pmf below takes integers only
-    pooled = pooled.astype(np.int64)
-    pvalue = np.full(len(pooled), np.nan)
-    n_splits = np.zeros(len(pooled), dtype=np.int64)
+    pooled = np.asarray(pooled, dtype=np.int64)
+    tables = np.zeros((1, 0, len(pooled)), dtype=np.int64)
+    for depth in depths[:-1]:
+        grown, held = [], 0
+        for table in tables:
+            options = enumerate_splits(pooled - table.sum(0), depth, limit)
+            if options is None or held + len(options) > limit:
+                return None
+            held += len(options)
+            grown.append(np.concatenate(
+                [np.repeat(table[None], len(options), axis=0),
+                 options[:, None]], axis=1))
+        tables = np.concatenate(grown)
+
+    return np.concatenate([tables, (pooled - tables.sum(1))[:, None]], axis=1)
+
+
+def table_pmf(tables, pooled):
+    """Multivariate hypergeometric probability of each (S, R, K) table."""
+    mass = np.ones(len(tables))
+    left = np.broadcast_to(pooled, tables[:, 0].shape)
+    for group in range(tables.shape[1] - 1):
+        mass *= multivariate_hypergeom.pmf(x=tables[:, group], m=left,
+                                           n=tables[:, group].sum(-1))
+        left = left - tables[:, group]
+
+    return mass
+
+
+def exact_tail(counts, first, observed, scorer, limit):
+    """Exact p for every position whose tables fit under limit.
+
+    counts is (N, R, K), its first `first` groups condition 1. Returns the p
+    and the table count. A count of zero marks a position left to the draws.
+    """
+    # counts arrive float for the scorer. the pmf takes integers only
+    counts = counts.astype(np.int64)
+    pooled, depths = counts.sum(1), counts.sum(-1)
+    pvalue = np.full(len(counts), np.nan)
+    n_splits = np.zeros(len(counts), dtype=np.int64)
 
     def flush(groups, positions):
         # reduceat reads arr[start] where two starts coincide. the observed
-        # split is always in its own support, which keeps every span positive
+        # table is always in its own support, which keeps every span positive
         # and the starts strictly increasing
         spans = [len(g) for g in groups]
         starts = np.concatenate([[0], np.cumsum(spans)[:-1]])
-        rows = np.concatenate(groups)
+        rows = np.concatenate(groups).astype(float)
         row_position = np.repeat(positions, spans)
-        null = scorer(rows.astype(float),
-                      (pooled[row_position] - rows).astype(float))[0]
-        mass = multivariate_hypergeom.pmf(x=rows, m=pooled[row_position],
-                                          n=rows.sum(-1))
+        null = scorer(rows[:, :first], rows[:, first:])[0]
+        mass = np.concatenate([table_pmf(g, pooled[i])
+                               for g, i in zip(groups, positions)])
         tail = np.where(null >= observed[row_position] - TIE_TOLERANCE,
                         mass, 0.0)
         # the sum over a whole support is 1 give or take float noise, and a p
@@ -293,8 +349,8 @@ def exact_tail(pooled, counts1, observed, scorer, limit=SPLIT_LIMIT):
         pvalue[positions] = np.clip(np.add.reduceat(tail, starts), 0.0, 1.0)
 
     groups, positions, held = [], [], 0
-    for i in range(len(pooled)):
-        group = enumerate_splits(pooled[i], int(counts1[i].sum()), limit)
+    for i in range(len(counts)):
+        group = enumerate_tables(pooled[i], depths[i], limit)
         if group is None:
             continue
 
@@ -312,71 +368,145 @@ def exact_tail(pooled, counts1, observed, scorer, limit=SPLIT_LIMIT):
     return pvalue, n_splits
 
 
-def split_once(pooled, sizes, rng, draws):
-    """Re-split pooled counts into two groups of the original sizes.
+def permute_reads(counts, rng, draws):
+    """Random permutations of (N, R, K) counts, as (N, draws, R, K) tables.
 
-    pooled is (N, 4) and sizes is (N,), the read count of condition 1. Returns
-    two (N, draws, 4) arrays that add back to pooled.
+    The reads of all groups are pooled and reassigned, each group keeping its
+    own depth, drawn from what the earlier groups left, one category at a time.
     """
-    first = np.stack([rng.multivariate_hypergeometric(p, n, size=draws)
-                      for p, n in zip(pooled.astype(int), sizes)])
+    positions, groups, categories = counts.shape
+    counts = counts.astype(np.int64)
+    left = np.repeat(counts.sum(1)[:, None], draws, axis=1)
+    out = np.zeros((positions, draws, groups, categories), dtype=np.int64)
+    for group in range(groups - 1):
+        size = np.repeat(counts[:, group].sum(-1)[:, None], draws, axis=1)
+        rest = left.sum(-1)
+        for category in range(categories - 1):
+            rest -= left[..., category]
+            taken = rng.hypergeometric(left[..., category], rest, size)
+            out[:, :, group, category] = taken
+            size -= taken
+        out[:, :, group, -1] = size
+        left -= out[:, :, group]
+    out[:, :, -1] = left
 
-    return first.astype(float), pooled[:, None, :] - first
+    return out
 
 
-def score_splits(left, right, scorer):
-    """Score every re-split, fitting each distinct table once. (positions, draws).
+def score_tables(permuted, first, scorer):
+    """Score (P, D, R, K) permuted tables, fitting each distinct one once.
 
-    A table is keyed by its position as well as its counts, since the same
-    counts at another position come from a different pool.
+    Returns (P, D). A table is keyed by its position as well as its counts,
+    since the same counts at another position come from a different pool.
     """
-    positions, draws, categories = left.shape
-    flat_left = left.reshape(-1, categories)
-    flat_right = right.reshape(-1, categories)
+    positions, draws, groups, categories = permuted.shape
+    flat = permuted.reshape(-1, groups, categories)
     key = np.column_stack([np.repeat(np.arange(positions), draws),
-                           flat_left.astype(np.int64)])
-    _, first, back = np.unique(key, axis=0, return_index=True,
+                           flat.reshape(len(flat), -1)])
+    _, index, back = np.unique(key, axis=0, return_index=True,
                                return_inverse=True)
-    scores = scorer(flat_left[first], flat_right[first])[0]
+    tables = flat[index].astype(float)
 
-    return scores[back].reshape(positions, draws)
+    return scorer(tables[:, :first], tables[:, first:])[0][back].reshape(
+        positions, draws)
 
 
-def permutation_test(conditions, qual, seed, draws=DRAWS,
-                     error_type="mismatch"):
-    """Score every position against the permutation null built from it.
+def permutation_test(conditions, scorer, seed, draws=DRAWS):
+    """Score every position against permutations of its own reads.
 
-    conditions is the two conditions' counts, each (N, K). The mismatch
-    pseudocounts are set by qual, over observed and null alike.
+    conditions is the two conditions' counts, each (N, R, K), one row per
+    replicate. scorer comes from scorer_for and scores observed and null.
 
-    The p is enumerated where the re-splits fit under SPLIT_LIMIT and drawn
-    where they do not, bounded at 1 / (draws + 1). p_exact marks which. The
-    score always comes from the draws, so every null holds the same count.
+    The p is exact where at most `draws` tables exist, and drawn elsewhere.
+    reached counts the permutations at or above the observed score, for
+    redraw to extend.
     """
     counts1, counts2 = conditions
-    scorer = scorer_for(error_type, qual)
+    first = counts1.shape[1]
+    counts = np.concatenate([counts1, counts2], axis=1)
     rng = np.random.default_rng(seed)
     observed, _ = scorer(counts1, counts2)
+    pvalue, n_splits = exact_tail(counts, first, observed, scorer, draws)
 
-    pooled = counts1 + counts2
-    sizes = counts1.sum(-1).astype(int)
-    pvalue, n_splits = exact_tail(pooled, counts1, observed, scorer)
-
-    null_max = np.full(len(pooled), np.nan)
-    for start in range(0, len(pooled), POSITION_CHUNK):
+    null_max = np.full(len(counts), np.nan)
+    reached = np.zeros(len(counts), dtype=np.int64)
+    for start in range(0, len(counts), POSITION_CHUNK):
         block = slice(start, start + POSITION_CHUNK)
-        left, right = split_once(pooled[block], sizes[block], rng, draws)
-        null = score_splits(left, right, scorer)
+        null = score_tables(permute_reads(counts[block], rng, draws), first,
+                            scorer)
         null_max[block] = null.max(-1)
+        reached[block] = (null >= observed[block][:, None]).sum(-1)
 
-        over = n_splits[block] == 0
-        if over.any():
-            drawn = (1 + (null >= observed[block][:, None]).sum(-1)) / (draws + 1)
-            pvalue[block] = np.where(over, drawn, pvalue[block])
+    drawn = n_splits == 0
+    pvalue[drawn] = (1 + reached[drawn]) / (draws + 1)
 
     return {"score": observed,
             "score_minus_max_null": np.clip(observed - null_max, 0.0, None),
-            "pvalue": pvalue, "n_splits": n_splits, "p_exact": n_splits > 0}
+            "pvalue": pvalue, "n_splits": n_splits, "p_exact": n_splits > 0,
+            "n_permutations": np.where(drawn, draws, 0), "reached": reached}
+
+
+def count_reached(task):
+    """Permutations at or above the observed score, per position, for one batch.
+
+    Returns the error type with the counts, for the caller to add up.
+    """
+    counts, first, observed, error_type, qual, draws, seed = task
+    null = score_tables(permute_reads(counts, np.random.default_rng(seed),
+                                      draws), first, scorer_for(error_type, qual))
+
+    return error_type, (null >= observed[:, None]).sum(-1)
+
+
+def redraw(results, conditions, args, mapper):
+    """Extend the drawn tests that no permutation reaches, in place.
+
+    Each round gives them REDRAW times their permutations, until their FDR
+    is below args.fdr. Their p then changes no call. conditions maps each
+    error type to its two conditions' counts.
+    """
+    for round_ in itertools.count(1):
+        rates = np.split(false_discovery_control(np.concatenate(
+            [r["pvalue"] for r in results.values()]), method="bh"),
+            len(results))
+        unreached = {t: np.flatnonzero((r["n_permutations"] > 0)
+                                       & (r["reached"] == 0))
+                     for t, r in results.items()}
+        worst = max((rate[unreached[t]].max() for t, rate
+                     in zip(results, rates) if unreached[t].size), default=0)
+        if worst < args.fdr:
+            return
+
+        started = time.monotonic()
+        tasks = []
+        for error_type, again in unreached.items():
+            if not again.size:
+                continue
+            result = results[error_type]
+            first = conditions[error_type][0].shape[1]
+            counts = np.concatenate(conditions[error_type], axis=1)[again]
+            observed = result["score"][again]
+            extra = result["n_permutations"][again[0]] * (REDRAW - 1)
+            # batches of at most BATCH_TABLES tables bound the memory, and a
+            # fixed batch keeps the result the same at any process count
+            batch = max(1, BATCH_TABLES // again.size)
+            seed = [args.seed, list(ERROR_TYPES).index(error_type), round_]
+            tasks += [(counts, first, observed, error_type, args.qual,
+                       min(batch, extra - done), [*seed, done])
+                      for done in range(0, extra, batch)]
+        print(f"round {round_}: {sum(map(len, unreached.values())):,} tests "
+              f"no permutation reaches, FDR up to {worst:.3g}; {len(tasks):,} "
+              "batches", flush=True)
+
+        for error_type, reached in mapper(count_reached, tasks):
+            results[error_type]["reached"][unreached[error_type]] += reached
+        for error_type, again in unreached.items():
+            result = results[error_type]
+            result["n_permutations"][again] *= REDRAW
+            result["pvalue"][again] = ((1 + result["reached"][again])
+                                       / (result["n_permutations"][again] + 1))
+        print(f"round {round_} done in "
+              f"{(time.monotonic() - started) / 60:.1f} min", flush=True)
 
 
 # ------------------------------------------------------------ the input file
@@ -454,34 +584,33 @@ def acgt(column):
 
 
 def counts_for(table, error_type):
-    """Both conditions' counts for one error type, each (N, K).
+    """Both conditions' counts for one error type, each (N, R, K).
 
     Mismatches read the ACGT vectors, indels the reads with the indel against
-    the reads spanning the position. Replicates of a condition are summed.
+    the reads spanning the position. Each replicate is one row.
     """
     counts = ERROR_TYPES[error_type]
-    bases = [sum(acgt(table[c]) for c in replicates(table, "bases", condition))
-             for condition in (1, 2)]
-    if error_type == "mismatch":
-        return tuple(bases)
+    conditions = []
+    for condition in (1, 2):
+        rows = []
+        for name in replicates(table, "bases", condition):
+            bases = acgt(table[name])
+            if error_type != "mismatch":
+                replicate = name.removeprefix("bases")
+                found = table[f"{counts}{replicate}"].to_numpy(float)
+                spanning = (bases.sum(1)
+                            + table[f"deletions{replicate}"].to_numpy(float))
+                bases = np.c_[found, spanning - found]
+            rows.append(bases)
+        conditions.append(np.stack(rows, axis=1))
 
-    found = [summed(table, counts, c) for c in (1, 2)]
-    spanning = [b.sum(1) + summed(table, "deletions", c)
-                for c, b in zip((1, 2), bases)]
-
-    return tuple(np.c_[n, total - n].astype(float)
-                 for n, total in zip(found, spanning))
+    return tuple(conditions)
 
 
 def replicates(table, prefix, condition):
     """The column names <prefix><condition><replicate>."""
     return [c for c in table.columns
             if re.fullmatch(rf"{prefix}{condition}\d+", c)]
-
-
-def summed(table, prefix, condition):
-    """One count column summed over a condition's replicates."""
-    return table[replicates(table, prefix, condition)].sum(axis=1).values
 
 
 def read_table(path, columns):
@@ -497,8 +626,9 @@ def permute_chunk(task):
     """Score one chunk. The index comes back so results can be reordered."""
     index, first, second, draws, seed, error_type, qual = task
 
-    return index, permutation_test((first, second), qual, seed, draws=draws,
-                                   error_type=error_type)
+    return index, permutation_test((first, second),
+                                   scorer_for(error_type, qual), seed,
+                                   draws=draws)
 
 
 def report_progress(done, total, started, error_type):
@@ -512,8 +642,8 @@ def report_progress(done, total, started, error_type):
           f"{elapsed / 60:.1f} min in, {left / 60:.1f} min left", flush=True)
 
 
-def permute(conditions, error_type, args):
-    """Permutation results for one error type, chunked across a pool.
+def permute(conditions, error_type, args, mapper):
+    """Permutation results for one error type, chunked through mapper.
 
     Each chunk is seeded from its index. The process count does not change the
     numbers.
@@ -524,20 +654,10 @@ def permute(conditions, error_type, args):
              for n, i in enumerate(range(0, len(first), args.chunk))]
 
     started = time.monotonic()
-    done = 0
-    if args.processes == 1:
-        results = []
-        for task in tasks:
-            results.append(permute_chunk(task)[1])
-            done += 1
-            report_progress(done, len(tasks), started, error_type)
-    else:
-        results = [None] * len(tasks)
-        with Pool(args.processes) as pool:
-            for index, result in pool.imap_unordered(permute_chunk, tasks):
-                results[index] = result
-                done += 1
-                report_progress(done, len(tasks), started, error_type)
+    results = [None] * len(tasks)
+    for done, (index, result) in enumerate(mapper(permute_chunk, tasks), 1):
+        results[index] = result
+        report_progress(done, len(tasks), started, error_type)
 
     return {key: np.concatenate([chunk[key] for chunk in results])
             for key in results[0]}
@@ -559,7 +679,12 @@ def parse_args():
     parser.add_argument("--error-types", default="mismatch,deletion,insertion",
                         help="comma separated, default all three")
     parser.add_argument("--draws", type=int, default=DRAWS,
-                        help=f"re-splits drawn per position, default {DRAWS}")
+                        help="permutations drawn per position, and the table "
+                             f"count up to which p is exact, default {DRAWS}")
+    parser.add_argument("--fdr", type=float, default=FDR,
+                        help=f"the call cutoff. tests no permutation reaches "
+                             f"get rounds of {REDRAW}x more until their FDR "
+                             f"is below it, default {FDR}")
     parser.add_argument("--chunk", type=int, default=CHUNK,
                         help=f"positions per task, default {CHUNK}")
     parser.add_argument("--processes", type=int, default=os.cpu_count(),
@@ -609,8 +734,12 @@ def main():
     if dropped:
         print(f"dropped {', '.join(dropped)}", flush=True)
 
-    results = {t: permute(counts_for(out, t), t, args)
-               for t in args.error_types}
+    conditions = {t: counts_for(out, t) for t in args.error_types}
+    with Pool(args.processes) if args.processes > 1 else nullcontext() as pool:
+        mapper = pool.imap_unordered if pool else map
+        results = {t: permute(conditions[t], t, args, mapper)
+                   for t in args.error_types}
+        redraw(results, conditions, args, mapper)
     # one BH family over every error type. MDI calls a position when any of
     # its tests passes, and needs no second correction
     pvalues = np.concatenate([r["pvalue"] for r in results.values()])
